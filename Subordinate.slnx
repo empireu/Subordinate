@@ -1,0 +1,13 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/KnowledgeSystem.Agents/KnowledgeSystem.Agents.csproj" />
+    <Project Path="src/KnowledgeSystem.Ai.Providers/KnowledgeSystem.Ai.Providers.csproj" />
+    <Project Path="src/KnowledgeSystem.Events/KnowledgeSystem.Events.csproj" />
+    <Project Path="src/KnowledgeSystems.Extensions/KnowledgeSystems.Extensions.csproj" />
+    <Project Path="src/Subordinate.Core/Subordinate.Core.csproj" />
+    <Project Path="src/Subordinate/Subordinate.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Subordinate.Tests/Subordinate.Tests.csproj" />
+  </Folder>
+</Solution>

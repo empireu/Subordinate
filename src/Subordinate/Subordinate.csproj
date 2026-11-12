@@ -1,0 +1,35 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <OutputType>Exe</OutputType>
+        <TargetFramework>net11.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <AssemblyName>subordinate</AssemblyName>
+        <RootNamespace>Subordinate</RootNamespace>
+        <InvariantGlobalization>true</InvariantGlobalization>
+        <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+        <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
+    </PropertyGroup>
+
+    <PropertyGroup>
+        <SubordinateHomeDirectory Condition="'$(SUBORDINATE_HOME)' != ''">$(SUBORDINATE_HOME)</SubordinateHomeDirectory>
+        <SubordinateHomeDirectory Condition="'$(SUBORDINATE_HOME)' == ''">$(USERPROFILE)\.subordinate</SubordinateHomeDirectory>
+        <SubordinateDeployDirectory>$(SubordinateHomeDirectory)\bin\</SubordinateDeployDirectory>
+        <SubordinatePublishDirectory>$(MSBuildProjectDirectory)\obj\deploy\$(Configuration)\</SubordinatePublishDirectory>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\Subordinate.Core\Subordinate.Core.csproj" />
+    </ItemGroup>
+
+    <Target Name="DeployToSubordinateHome" AfterTargets="Build" Condition="'$(SubordinateDeploying)' != 'true' And '$(OS)' == 'Windows_NT'">
+        <MSBuild Projects="$(MSBuildProjectFullPath)" Targets="Publish" Properties="Configuration=$(Configuration);RuntimeIdentifier=win-x64;SelfContained=true;PublishDir=$(SubordinatePublishDirectory);SubordinateDeploying=true" />
+        <ItemGroup>
+            <SubordinatePublishedFiles Include="$(SubordinatePublishDirectory)**\*" />
+        </ItemGroup>
+        <Copy SourceFiles="@(SubordinatePublishedFiles)" DestinationFiles="@(SubordinatePublishedFiles->'$(SubordinateDeployDirectory)%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" Retries="3" RetryDelayMilliseconds="500" ContinueOnError="WarnAndContinue" />
+        <Message Importance="high" Text="Deployed subordinate to $(SubordinateDeployDirectory)" />
+    </Target>
+
+</Project>

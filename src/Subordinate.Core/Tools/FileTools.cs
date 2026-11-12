@@ -1,0 +1,363 @@
+using System.Globalization;
+using System.Text;
+using KnowledgeSystem.Agents.Orchestration;
+using KnowledgeSystem.Agents.Orchestration.Tools;
+using KnowledgeSystem.Agents.Tools;
+using Subordinate.Core.Classification;
+using Subordinate.Core.Policy;
+using Subordinate.Core.Running;
+
+namespace Subordinate.Core.Tools;
+
+internal static class FileToolPaths
+{
+    public static ResolvedPath Resolve(string requested, ToolEnvironment environment)
+    {
+        return ShellPaths.Resolve(requested, environment.Workdir);
+    }
+
+    public static ActionClassification Classify(string tool, string requested, bool isWrite, ToolEnvironment environment)
+    {
+        var path = Resolve(requested, environment);
+        var capabilities = new HashSet<Capability> { Capability.Read };
+        var reasons = new List<string>();
+        var scope = environment.CreateScope(environment.Workdir);
+
+        if (isWrite)
+        {
+            capabilities.Add(Capability.Write);
+        }
+
+        if (path.Kind != ResolvedPathKind.Local)
+        {
+            capabilities.Add(Capability.Unbounded);
+            reasons.Add($"\"{requested}\" is not a local file path");
+        }
+
+        foreach (var match in SensitivePaths.FindMatches(requested))
+        {
+            capabilities.Add(Capability.Sensitive);
+            reasons.Add($"the path refers to a credential store ({match})");
+        }
+
+        scope.ApplyPathCapabilities([new PathAccess(isWrite, path)], capabilities, reasons);
+
+        return new ActionClassification
+        {
+            Tool = tool,
+            Summary = $"{tool} {path.Display}",
+            Units =
+            [
+                new ActionUnit
+                {
+                    Display = $"{tool} {path.Display}",
+                    Key = path.Kind == ResolvedPathKind.Local ? path.Path!.ToLowerInvariant() : null,
+                    Capabilities = capabilities,
+                    Reasons = reasons,
+                    Paths = [new PathAccess(isWrite, path)]
+                }
+            ],
+            SharedCapabilities = new HashSet<Capability>(),
+            SharedReasons = []
+        };
+    }
+
+    public static string ReadText(string path, out bool isBinary)
+    {
+        return ReadText(path, out isBinary, out _);
+    }
+
+    public static string ReadText(string path, out bool isBinary, out bool hasByteOrderMark)
+    {
+        var bytes = File.ReadAllBytes(path);
+        isBinary = Array.IndexOf(bytes, (byte)0, 0, Math.Min(bytes.Length, 8192)) >= 0;
+        hasByteOrderMark = bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF;
+
+        if (isBinary)
+        {
+            return string.Empty;
+        }
+
+        using var reader = new StreamReader(new MemoryStream(bytes), new UTF8Encoding(false), true);
+        return reader.ReadToEnd();
+    }
+
+    public static string StableHash(string value)
+    {
+        return Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(value)))[..16];
+    }
+}
+
+/// <summary>
+///     Reads a text file with line numbers.
+/// </summary>
+public sealed class ReadFileToolHandler(AgentTool tool, StringArgument pathArgument, IntegerArgument offsetArgument, IntegerArgument limitArgument)
+    : ToolHandler<SubordinateContext>.Plain(tool), IGatedTool
+{
+    public const string ToolName = "read_file";
+    private const int DefaultLineLimit = 2000;
+    private const int MaxLineLength = 2000;
+    private const int MaxOutputCharacters = 100_000;
+
+    public static void Register(AgentToolRegistry<SubordinateContext> registry)
+    {
+        var readTool = new ToolBuilder(ToolName)
+            .WithDescription("Reads a text file and returns its lines prefixed with line numbers. Use offset and limit to page through large files.")
+            .WithRequiredStringArgument("path", "The file path, relative to the session workdir or absolute.", out var pathArg)
+            .WithIntegerArgument("offset", "The 1-based line number to start at. Default 1.", out var offsetArg)
+            .WithIntegerArgument("limit", $"The number of lines to return. Default {DefaultLineLimit}.", out var limitArg)
+            .Build();
+
+        registry.RegisterTool(readTool, new ReadFileToolHandler(readTool, pathArg, offsetArg, limitArg));
+    }
+
+    public ActionClassification Classify(ArgumentExtractionResult args, ToolEnvironment environment)
+    {
+        return FileToolPaths.Classify(ToolName, pathArgument.GetValue(args), false, environment);
+    }
+
+    public string Fingerprint(ArgumentExtractionResult args, ToolEnvironment environment)
+    {
+        return $"{ToolName}\n{FileToolPaths.Resolve(pathArgument.GetValue(args), environment).Display}";
+    }
+
+    public CallDescription Describe(ArgumentExtractionResult args, ToolEnvironment environment)
+    {
+        var path = FileToolPaths.Resolve(pathArgument.GetValue(args), environment).Display;
+        return new CallDescription { Summary = $"read {path}", Path = path };
+    }
+
+    public override Task<ToolExecutionResult> ExecuteAsync(AgentRunner<SubordinateContext> runner, ArgumentExtractionResult args, CancellationToken cancellationToken)
+    {
+        var environment = runner.ExecutionContext.Environment;
+        var path = FileToolPaths.Resolve(pathArgument.GetValue(args), environment);
+
+        if (path.Kind != ResolvedPathKind.Local)
+        {
+            return Task.FromResult(Error($"\"{path.Authored}\" is not a local file path."));
+        }
+
+        if (Directory.Exists(path.Path))
+        {
+            return Task.FromResult(Error($"{path.Path} is a directory. Use the shell tool to list it."));
+        }
+
+        if (!File.Exists(path.Path))
+        {
+            return Task.FromResult(Error($"{path.Path} does not exist."));
+        }
+
+        string text;
+        try
+        {
+            text = FileToolPaths.ReadText(path.Path!, out var isBinary);
+
+            if (isBinary)
+            {
+                return Task.FromResult(Error($"{path.Path} looks like a binary file."));
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return Task.FromResult(Error($"{path.Path} could not be read: {ex.Message}"));
+        }
+
+        var lines = text.Split('\n');
+        var offset = offsetArgument.TryGetValue(args, out var requestedOffset) && requestedOffset > 0 ? requestedOffset : 1;
+        var limit = limitArgument.TryGetValue(args, out var requestedLimit) && requestedLimit > 0 ? requestedLimit : DefaultLineLimit;
+        var builder = new StringBuilder();
+        var lastLine = Math.Min(lines.Length, offset - 1 + limit);
+
+        if (offset > lines.Length)
+        {
+            return Task.FromResult(Success($"{path.Path} has {lines.Length} lines; offset {offset} is past the end."));
+        }
+
+        for (var index = offset - 1; index < lastLine; index++)
+        {
+            var line = lines[index].TrimEnd('\r');
+
+            if (line.Length > MaxLineLength)
+            {
+                line = line[..MaxLineLength] + " [line truncated]";
+            }
+
+            builder.Append((index + 1).ToString(CultureInfo.InvariantCulture)).Append('\t').Append(line).Append('\n');
+
+            if (builder.Length > MaxOutputCharacters)
+            {
+                builder.Append(CultureInfo.InvariantCulture, $"[output truncated at line {index + 1}; continue with offset {index + 2}]\n");
+                return Task.FromResult(Success(builder.ToString()));
+            }
+        }
+
+        if (lastLine < lines.Length)
+        {
+            builder.Append(CultureInfo.InvariantCulture, $"[{lines.Length - lastLine} more lines; continue with offset {lastLine + 1}]\n");
+        }
+
+        return Task.FromResult(Success(builder.ToString()));
+    }
+}
+
+/// <summary>
+///     Writes a whole file.
+/// </summary>
+public sealed class WriteFileToolHandler(AgentTool tool, StringArgument pathArgument, StringArgument contentArgument)
+    : ToolHandler<SubordinateContext>.Plain(tool), IGatedTool
+{
+    public const string ToolName = "write_file";
+
+    public static void Register(AgentToolRegistry<SubordinateContext> registry)
+    {
+        var writeTool = new ToolBuilder(ToolName)
+            .WithDescription("Creates or overwrites a file with the given content. Parent directories are created as needed.")
+            .WithRequiredStringArgument("path", "The file path, relative to the session workdir or absolute.", out var pathArg)
+            .WithRequiredStringArgument("content", "The complete new content of the file.", out var contentArg)
+            .Build();
+
+        registry.RegisterTool(writeTool, new WriteFileToolHandler(writeTool, pathArg, contentArg));
+    }
+
+    public ActionClassification Classify(ArgumentExtractionResult args, ToolEnvironment environment)
+    {
+        return FileToolPaths.Classify(ToolName, pathArgument.GetValue(args), true, environment);
+    }
+
+    public string Fingerprint(ArgumentExtractionResult args, ToolEnvironment environment)
+    {
+        return $"{ToolName}\n{FileToolPaths.Resolve(pathArgument.GetValue(args), environment).Display}\n{FileToolPaths.StableHash(contentArgument.GetValue(args))}";
+    }
+
+    public CallDescription Describe(ArgumentExtractionResult args, ToolEnvironment environment)
+    {
+        var path = FileToolPaths.Resolve(pathArgument.GetValue(args), environment).Display;
+        return new CallDescription { Summary = $"write {path} ({contentArgument.GetValue(args).Length} characters)", Path = path };
+    }
+
+    public override async Task<ToolExecutionResult> ExecuteAsync(AgentRunner<SubordinateContext> runner, ArgumentExtractionResult args, CancellationToken cancellationToken)
+    {
+        var environment = runner.ExecutionContext.Environment;
+        var path = FileToolPaths.Resolve(pathArgument.GetValue(args), environment);
+
+        if (path.Kind != ResolvedPathKind.Local)
+        {
+            return Error($"\"{path.Authored}\" is not a local file path.");
+        }
+
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(path.Path!)!);
+            await File.WriteAllTextAsync(path.Path!, contentArgument.GetValue(args), new UTF8Encoding(false), cancellationToken);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return Error($"{path.Path} could not be written: {ex.Message}");
+        }
+
+        environment.FilesWritten.Add(path.Path!);
+        return Success($"Wrote {path.Path}.");
+    }
+}
+
+/// <summary>
+///     Replaces exact text in a file.
+/// </summary>
+public sealed class EditFileToolHandler(AgentTool tool, StringArgument pathArgument, StringArgument oldArgument, StringArgument newArgument, BooleanArgument replaceAllArgument)
+    : ToolHandler<SubordinateContext>.Plain(tool), IGatedTool
+{
+    public const string ToolName = "edit_file";
+
+    public static void Register(AgentToolRegistry<SubordinateContext> registry)
+    {
+        var editTool = new ToolBuilder(ToolName)
+            .WithDescription("Replaces exact text in a file. old_string must occur exactly once unless replace_all is true. Read the file first so the text matches exactly, including whitespace.")
+            .WithRequiredStringArgument("path", "The file path, relative to the session workdir or absolute.", out var pathArg)
+            .WithRequiredStringArgument("old_string", "The exact text to replace.", out var oldArg)
+            .WithRequiredStringArgument("new_string", "The replacement text.", out var newArg)
+            .WithBooleanArgument("replace_all", "Replace every occurrence instead of exactly one. Default false.", out var replaceAllArg)
+            .Build();
+
+        registry.RegisterTool(editTool, new EditFileToolHandler(editTool, pathArg, oldArg, newArg, replaceAllArg));
+    }
+
+    public ActionClassification Classify(ArgumentExtractionResult args, ToolEnvironment environment)
+    {
+        return FileToolPaths.Classify(ToolName, pathArgument.GetValue(args), true, environment);
+    }
+
+    public string Fingerprint(ArgumentExtractionResult args, ToolEnvironment environment)
+    {
+        return $"{ToolName}\n{FileToolPaths.Resolve(pathArgument.GetValue(args), environment).Display}\n{FileToolPaths.StableHash(oldArgument.GetValue(args))}\n{FileToolPaths.StableHash(newArgument.GetValue(args))}";
+    }
+
+    public CallDescription Describe(ArgumentExtractionResult args, ToolEnvironment environment)
+    {
+        var path = FileToolPaths.Resolve(pathArgument.GetValue(args), environment).Display;
+        return new CallDescription { Summary = $"edit {path}", Path = path };
+    }
+
+    public override async Task<ToolExecutionResult> ExecuteAsync(AgentRunner<SubordinateContext> runner, ArgumentExtractionResult args, CancellationToken cancellationToken)
+    {
+        var environment = runner.ExecutionContext.Environment;
+        var path = FileToolPaths.Resolve(pathArgument.GetValue(args), environment);
+        var oldText = oldArgument.GetValue(args);
+        var newText = newArgument.GetValue(args);
+        var replaceAll = replaceAllArgument.TryGetValue(args, out var requested) && requested;
+
+        if (path.Kind != ResolvedPathKind.Local || !File.Exists(path.Path))
+        {
+            return Error($"{path.Display} does not exist.");
+        }
+
+        if (oldText.Length == 0)
+        {
+            return Error("old_string is empty. Use write_file to create a file.");
+        }
+
+        try
+        {
+            var content = FileToolPaths.ReadText(path.Path!, out var isBinary, out var hasByteOrderMark);
+
+            if (isBinary)
+            {
+                return Error($"{path.Path} looks like a binary file.");
+            }
+
+            var count = CountOccurrences(content, oldText);
+
+            if (count == 0)
+            {
+                return Error($"old_string was not found in {path.Path}. Read the file again and copy the text exactly.");
+            }
+
+            if (count > 1 && !replaceAll)
+            {
+                return Error($"old_string occurs {count} times in {path.Path}. Add surrounding context to make it unique, or set replace_all.");
+            }
+
+            var updated = content.Replace(oldText, newText, StringComparison.Ordinal);
+            await File.WriteAllTextAsync(path.Path!, updated, new UTF8Encoding(hasByteOrderMark), cancellationToken);
+            environment.FilesWritten.Add(path.Path!);
+            return Success($"Replaced {count} occurrence{(count == 1 ? string.Empty : "s")} in {path.Path}.");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return Error($"{path.Path} could not be edited: {ex.Message}");
+        }
+    }
+
+    private static int CountOccurrences(string content, string value)
+    {
+        var count = 0;
+        var index = 0;
+
+        while ((index = content.IndexOf(value, index, StringComparison.Ordinal)) >= 0)
+        {
+            count++;
+            index += value.Length;
+        }
+
+        return count;
+    }
+}
