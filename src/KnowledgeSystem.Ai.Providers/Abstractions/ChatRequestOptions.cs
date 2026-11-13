@@ -7,4 +7,5 @@ public sealed class ChatRequestOptions
     public int? MaxOutputTokens { get; init; }
     public string? ReasoningEffort { get; init; }
     public string? ToolChoice { get; init; }
+    public string? PromptCacheKey { get; init; }
 }

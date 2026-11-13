@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Security.Cryptography;
 using System.Text;
 using KnowledgeSystem.Agents.Orchestration;
 using KnowledgeSystem.Agents.Orchestration.Tools;
@@ -59,6 +60,7 @@ public sealed class SessionRunner
     private int _persistedCount;
     private int _countedModelCalls;
     private long _countedInputTokens;
+    private long _countedCachedInputTokens;
     private long _countedOutputTokens;
     private string _lastActivity = "starting";
 
@@ -70,8 +72,23 @@ public sealed class SessionRunner
         _runId = runId;
         _runDirectory = paths.RunDirectory(runId);
         _provider = provider;
-        _requestOptions = requestOptions;
+        _requestOptions = new ChatRequestOptions
+        {
+            Model = requestOptions.Model,
+            Temperature = requestOptions.Temperature,
+            MaxOutputTokens = requestOptions.MaxOutputTokens,
+            ReasoningEffort = requestOptions.ReasoningEffort,
+            ToolChoice = requestOptions.ToolChoice,
+            PromptCacheKey = requestOptions.PromptCacheKey ?? CreatePromptCacheKey(record)
+        };
         _executor = executor;
+    }
+
+    private static string CreatePromptCacheKey(SessionRecord record)
+    {
+        var identity = $"{record.Name}|{record.Workdir}|{record.CreatedAt.UtcTicks}";
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(identity));
+        return "subordinate-" + Convert.ToHexString(hash, 0, 16).ToLowerInvariant();
     }
 
     public string RunDirectory => _runDirectory;
@@ -625,9 +642,11 @@ public sealed class SessionRunner
 
         _record.Counters.ModelCalls += _counting.ModelCalls - _countedModelCalls;
         _record.Counters.InputTokens += _counting.InputTokens - _countedInputTokens;
+        _record.Counters.CachedInputTokens += _counting.CachedInputTokens - _countedCachedInputTokens;
         _record.Counters.OutputTokens += _counting.OutputTokens - _countedOutputTokens;
         _countedModelCalls = _counting.ModelCalls;
         _countedInputTokens = _counting.InputTokens;
+        _countedCachedInputTokens = _counting.CachedInputTokens;
         _countedOutputTokens = _counting.OutputTokens;
     }
 
@@ -768,6 +787,7 @@ public sealed class SessionRunner
                 ToolCalls = _record.Counters.ToolCalls,
                 PendingCount = _record.PendingCount,
                 InputTokens = _record.Counters.InputTokens,
+                CachedInputTokens = _record.Counters.CachedInputTokens,
                 OutputTokens = _record.Counters.OutputTokens,
                 LastActivity = _lastActivity
             });

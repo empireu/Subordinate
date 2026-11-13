@@ -195,6 +195,8 @@ public sealed class CountersRecord
 
     public long InputTokens { get; set; }
 
+    public long CachedInputTokens { get; set; }
+
     public long OutputTokens { get; set; }
 }
 

@@ -35,6 +35,10 @@ internal sealed class MistralChatRequest
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? ReasoningEffort { get; init; }
 
+    [JsonPropertyName("prompt_cache_key")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? PromptCacheKey { get; init; }
+
     [JsonPropertyName("stream_options")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public MistralStreamOptions? StreamOptions { get; init; }

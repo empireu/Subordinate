@@ -25,6 +25,7 @@ internal static class MistralRequestMapper
             Tools = MapTools(request.Tools),
             ToolChoice = request.ToolChoice,
             ReasoningEffort = request.ReasoningEffort,
+            PromptCacheKey = request.PromptCacheKey,
             StreamOptions = new MistralStreamOptions
             {
                 IncludeUsage = true

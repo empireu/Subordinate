@@ -320,7 +320,7 @@ internal static class SessionCommands
 
         if (status is { } element)
         {
-            builder.Append(CultureInfo.InvariantCulture, $"Run {record.CurrentRun?.RunId}: {Read(element, "model_calls")} model calls, {Read(element, "tool_calls")} tool calls, {Read(element, "elapsed_seconds")} s elapsed, last activity: {Read(element, "last_activity")}.\n");
+            builder.Append(CultureInfo.InvariantCulture, $"Run {record.CurrentRun?.RunId}: {Read(element, "model_calls")} model calls, {Read(element, "tool_calls")} tool calls, {Read(element, "input_tokens")} input tokens ({Read(element, "cached_input_tokens")} cached), {Read(element, "output_tokens")} output tokens, {Read(element, "elapsed_seconds")} s elapsed, last activity: {Read(element, "last_activity")}.\n");
         }
 
         if (record.PendingCount > 0)
@@ -532,6 +532,9 @@ internal static class SessionCommands
         {
             writer.WriteNumber("model_calls", record.Counters.ModelCalls);
             writer.WriteNumber("tool_calls", record.Counters.ToolCalls);
+            writer.WriteNumber("input_tokens", record.Counters.InputTokens);
+            writer.WriteNumber("cached_input_tokens", record.Counters.CachedInputTokens);
+            writer.WriteNumber("output_tokens", record.Counters.OutputTokens);
             writer.WriteStringArray("files_written", record.FilesWritten);
 
             if (errorRecord != null)
@@ -585,6 +588,8 @@ internal static class SessionCommands
             }
         }
 
+        builder.Append(CultureInfo.InvariantCulture, $"\nUsage: {record.Counters.ModelCalls} model calls, {record.Counters.InputTokens} input tokens ({record.Counters.CachedInputTokens} cached), {record.Counters.OutputTokens} output tokens.");
+
         if (runDirectory != null)
         {
             builder.Append(CultureInfo.InvariantCulture, $"\nRun directory: {runDirectory}");
@@ -619,7 +624,7 @@ internal static class SessionCommands
 
         if (status is { } element)
         {
-            foreach (var property in new[] { "elapsed_seconds", "last_activity", "updated_at", "pid", "input_tokens", "output_tokens" })
+            foreach (var property in new[] { "elapsed_seconds", "last_activity", "updated_at", "pid", "input_tokens", "cached_input_tokens", "output_tokens" })
             {
                 if (element.TryGetProperty(property, out var value))
                 {

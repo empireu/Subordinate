@@ -10,6 +10,7 @@ public sealed class CountingChatProvider(IChatProvider inner) : IChatProvider
 {
     private int _modelCalls;
     private long _inputTokens;
+    private long _cachedInputTokens;
     private long _outputTokens;
 
     public string ProviderId => inner.ProviderId;
@@ -19,6 +20,8 @@ public sealed class CountingChatProvider(IChatProvider inner) : IChatProvider
     public int ModelCalls => Volatile.Read(ref _modelCalls);
 
     public long InputTokens => Interlocked.Read(ref _inputTokens);
+
+    public long CachedInputTokens => Interlocked.Read(ref _cachedInputTokens);
 
     public long OutputTokens => Interlocked.Read(ref _outputTokens);
 
@@ -36,6 +39,7 @@ public sealed class CountingChatProvider(IChatProvider inner) : IChatProvider
                 if (streamEvent is UsageReceivedEvent usage)
                 {
                     Interlocked.Add(ref _inputTokens, usage.Usage.InputTokens ?? 0);
+                    Interlocked.Add(ref _cachedInputTokens, usage.Usage.CachedInputTokens ?? 0);
                     Interlocked.Add(ref _outputTokens, usage.Usage.OutputTokens ?? 0);
                 }
 

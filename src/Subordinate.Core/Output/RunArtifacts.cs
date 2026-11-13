@@ -30,6 +30,8 @@ public sealed class StatusSnapshot
 
     public required long InputTokens { get; init; }
 
+    public required long CachedInputTokens { get; init; }
+
     public required long OutputTokens { get; init; }
 
     public required string LastActivity { get; init; }
@@ -77,6 +79,7 @@ public static class RunArtifacts
             writer.WriteNumber("tool_calls", status.ToolCalls);
             writer.WriteNumber("pending_count", status.PendingCount);
             writer.WriteNumber("input_tokens", status.InputTokens);
+            writer.WriteNumber("cached_input_tokens", status.CachedInputTokens);
             writer.WriteNumber("output_tokens", status.OutputTokens);
             writer.WriteString("last_activity", status.LastActivity);
             writer.WriteEndObject();
@@ -105,6 +108,7 @@ public static class RunArtifacts
             writer.WriteNumber("model_calls", record.Counters.ModelCalls);
             writer.WriteNumber("tool_calls", record.Counters.ToolCalls);
             writer.WriteNumber("input_tokens", record.Counters.InputTokens);
+            writer.WriteNumber("cached_input_tokens", record.Counters.CachedInputTokens);
             writer.WriteNumber("output_tokens", record.Counters.OutputTokens);
             writer.WriteNumber("pending_count", record.PendingCount);
             writer.WriteString("pending_file", PendingFile(runDirectory));

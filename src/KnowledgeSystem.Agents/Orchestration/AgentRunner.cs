@@ -253,7 +253,8 @@ public sealed class AgentRunner<TContext> : AgentRunner where TContext : AgentEx
             Temperature = turnOptions.Temperature,
             MaxOutputTokens = turnOptions.MaxOutputTokens,
             ReasoningEffort = turnOptions.ReasoningEffort,
-            ToolChoice = turnOptions.ToolChoice
+            ToolChoice = turnOptions.ToolChoice,
+            PromptCacheKey = turnOptions.PromptCacheKey
         };
 
         // Executes the LLM call and raises the error and completion events:
