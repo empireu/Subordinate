@@ -86,6 +86,55 @@ internal static class FileToolPaths
     {
         return Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(value)))[..16];
     }
+
+    public static string MatchExistingLineEndings(string path, string content)
+    {
+        if (!File.Exists(path))
+        {
+            return content;
+        }
+
+        var existing = ReadText(path, out var isBinary);
+        return !isBinary && LineEndings.IsCrlfDominant(existing) ? LineEndings.ToCrlf(content) : content;
+    }
+}
+
+internal static class LineEndings
+{
+    public static bool IsCrlfDominant(string text)
+    {
+        var crlfCount = 0;
+        var bareLineFeedCount = 0;
+
+        for (var index = 0; index < text.Length; index++)
+        {
+            if (text[index] != '\n')
+            {
+                continue;
+            }
+
+            if (index > 0 && text[index - 1] == '\r')
+            {
+                crlfCount++;
+            }
+            else
+            {
+                bareLineFeedCount++;
+            }
+        }
+
+        return crlfCount > bareLineFeedCount;
+    }
+
+    public static string ToCrlf(string text)
+    {
+        if (!text.Contains('\n'))
+        {
+            return text;
+        }
+
+        return text.Replace("\r\n", "\n", StringComparison.Ordinal).Replace("\n", "\r\n", StringComparison.Ordinal);
+    }
 }
 
 /// <summary>
@@ -248,7 +297,8 @@ public sealed class WriteFileToolHandler(AgentTool tool, StringArgument pathArgu
         try
         {
             Directory.CreateDirectory(Path.GetDirectoryName(path.Path!)!);
-            await File.WriteAllTextAsync(path.Path!, contentArgument.GetValue(args), new UTF8Encoding(false), cancellationToken);
+            var content = FileToolPaths.MatchExistingLineEndings(path.Path!, contentArgument.GetValue(args));
+            await File.WriteAllTextAsync(path.Path!, content, new UTF8Encoding(false), cancellationToken);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -324,19 +374,13 @@ public sealed class EditFileToolHandler(AgentTool tool, StringArgument pathArgum
                 return Error($"{path.Path} looks like a binary file.");
             }
 
-            var count = CountOccurrences(content, oldText);
+            var error = TryEdit(path.Path!, content, oldText, newText, replaceAll, out var updated, out var count);
 
-            if (count == 0)
+            if (error is not null)
             {
-                return Error($"old_string was not found in {path.Path}. Read the file again and copy the text exactly.");
+                return Error(error);
             }
 
-            if (count > 1 && !replaceAll)
-            {
-                return Error($"old_string occurs {count} times in {path.Path}. Add surrounding context to make it unique, or set replace_all.");
-            }
-
-            var updated = content.Replace(oldText, newText, StringComparison.Ordinal);
             await File.WriteAllTextAsync(path.Path!, updated, new UTF8Encoding(hasByteOrderMark), cancellationToken);
             environment.FilesWritten.Add(path.Path!);
             return Success($"Replaced {count} occurrence{(count == 1 ? string.Empty : "s")} in {path.Path}.");
@@ -345,6 +389,45 @@ public sealed class EditFileToolHandler(AgentTool tool, StringArgument pathArgum
         {
             return Error($"{path.Path} could not be edited: {ex.Message}");
         }
+    }
+
+    internal static string? TryEdit(string displayPath, string content, string oldText, string newText, bool replaceAll, out string updated, out int count)
+    {
+        updated = content;
+        var matchedText = oldText;
+        var writeCrlf = LineEndings.IsCrlfDominant(content);
+        count = CountOccurrences(content, oldText);
+
+        if (count == 0)
+        {
+            var crlfText = LineEndings.ToCrlf(oldText);
+
+            if (!string.Equals(crlfText, oldText, StringComparison.Ordinal))
+            {
+                var crlfCount = CountOccurrences(content, crlfText);
+
+                if (crlfCount > 0)
+                {
+                    matchedText = crlfText;
+                    count = crlfCount;
+                    writeCrlf = true;
+                }
+            }
+        }
+
+        if (count == 0)
+        {
+            return $"old_string was not found in {displayPath}. Read the file again and copy the text exactly.";
+        }
+
+        if (count > 1 && !replaceAll)
+        {
+            return $"old_string occurs {count} times in {displayPath}. Add surrounding context to make it unique, or set replace_all.";
+        }
+
+        var replacement = writeCrlf ? LineEndings.ToCrlf(newText) : newText;
+        updated = content.Replace(matchedText, replacement, StringComparison.Ordinal);
+        return null;
     }
 
     private static int CountOccurrences(string content, string value)
