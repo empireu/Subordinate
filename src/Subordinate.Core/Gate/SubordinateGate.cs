@@ -15,6 +15,11 @@ public sealed class SubordinateGate(PendingLedger ledger, Func<string> currentRu
 {
     public PendingLedger Ledger { get; } = ledger;
 
+    /// <summary>
+    ///     When this returns true, new tool calls are refused without classification.
+    /// </summary>
+    public Func<bool>? RefuseNewCalls { get; init; }
+
     public async Task<ToolGateVerdict> EvaluateAsync(AgentRunner<SubordinateContext> runner, AgentToolFrame.PlainRunningFrame frame, CancellationToken cancellationToken)
     {
         if (!runner.Agent.ToolRegistry.Handlers.TryGetValue(frame.Tool, out var handler) || handler is not IGatedTool gatedTool)
@@ -43,6 +48,11 @@ public sealed class SubordinateGate(PendingLedger ledger, Func<string> currentRu
             {
                 return ToolGateVerdict.Defer(new ToolDeferral(existing.DeferralMessage, existing));
             }
+        }
+
+        if (RefuseNewCalls?.Invoke() == true)
+        {
+            return ToolGateVerdict.Deny("NOT EXECUTED: the turn limit is reached, so no more tools can run. Give your final answer now, including what is done and what remains.");
         }
 
         var fingerprint = gatedTool.Fingerprint(frame.Args, environment);

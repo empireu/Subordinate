@@ -201,6 +201,7 @@ internal static class SessionCommands
             record.Runs.Add(new RunRecord { RunId = runId, Kind = command, StartedAt = DateTimeOffset.UtcNow, State = SessionStates.Starting });
             record.State = SessionStates.Starting;
             record.Error = null;
+            record.FinalText = null;
             store.Save(paths, record);
 
             if (wait)
@@ -320,12 +321,16 @@ internal static class SessionCommands
 
         if (status is { } element)
         {
-            builder.Append(CultureInfo.InvariantCulture, $"Run {record.CurrentRun?.RunId}: {Read(element, "model_calls")} model calls, {Read(element, "tool_calls")} tool calls, {Read(element, "input_tokens")} input tokens ({Read(element, "cached_input_tokens")} cached), {Read(element, "output_tokens")} output tokens, {Read(element, "elapsed_seconds")} s elapsed, last activity: {Read(element, "last_activity")}.\n");
+            builder.Append(CultureInfo.InvariantCulture, $"Run {record.CurrentRun?.RunId}: {Read(element, "run", "model_calls")} model calls, {Read(element, "run", "tool_calls")} tool calls, {Read(element, "run", "input_tokens")} input tokens ({Read(element, "run", "cached_input_tokens")} cached), {Read(element, "run", "output_tokens")} output tokens, {Read(element, "elapsed_seconds")} s elapsed, {Read(element, "turns_remaining")} turns remaining, last activity: {Read(element, "last_activity")}.\n");
         }
 
         if (record.PendingCount > 0)
         {
-            builder.Append(CultureInfo.InvariantCulture, $"{record.PendingCount} pending approval(s); see {RunArtifacts.PendingFile(runDirectory ?? paths.Directory)}.\n");
+            var pendingFile = runDirectory != null ? RunArtifacts.PendingFile(runDirectory) : null;
+            var pendingText = pendingFile != null && File.Exists(pendingFile)
+                ? string.Create(CultureInfo.InvariantCulture, $"{record.PendingCount} pending approval(s); see {pendingFile}.\n")
+                : string.Create(CultureInfo.InvariantCulture, $"{record.PendingCount} pending approval(s).\n");
+            builder.Append(pendingText);
         }
 
         return new CommandResult(envelope, builder.ToString().TrimEnd('\n'));
@@ -334,19 +339,94 @@ internal static class SessionCommands
     public static async Task<CommandResult> WaitAsync(CommandLine commandLine)
     {
         var store = new SessionStore(SubordinateConfig.ResolveHome());
-        var (paths, record) = SessionResolver.Resolve(store, commandLine.Required("name"), commandLine.Single("workdir"));
-        var timeout = commandLine.Integer("timeout-seconds", 1, 7 * 24 * 3600);
-        var deadline = timeout.HasValue ? DateTime.UtcNow.AddSeconds(timeout.Value) : DateTime.MaxValue;
-        var state = SessionResolver.LiveState(paths, record);
+        var names = SplitNames(commandLine.All("name")).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 
-        while (SessionStates.IsActive(state) && DateTime.UtcNow < deadline)
+        if (names.Count == 0)
         {
-            await Task.Delay(1000);
-            record = store.Load(paths);
-            state = SessionResolver.LiveState(paths, record);
+            throw new SubordinateException(ErrorCode.InvalidArguments, "--name is required for 'wait'.");
         }
 
-        return FinishedResult("wait", paths, record, state);
+        var workdir = commandLine.Single("workdir");
+        var timeout = commandLine.Integer("timeout-seconds", 1, 7 * 24 * 3600);
+        var deadline = timeout.HasValue ? DateTime.UtcNow.AddSeconds(timeout.Value) : DateTime.MaxValue;
+
+        if (names.Count == 1)
+        {
+            var (paths, record) = SessionResolver.Resolve(store, names[0], workdir);
+            var state = SessionResolver.LiveState(paths, record);
+
+            while (SessionStates.IsActive(state) && DateTime.UtcNow < deadline)
+            {
+                await Task.Delay(1000);
+                record = store.Load(paths);
+                state = SessionResolver.LiveState(paths, record);
+            }
+
+            return FinishedResult("wait", paths, record, state);
+        }
+
+        var targets = names.Select(name => SessionResolver.Resolve(store, name, workdir)).ToList();
+        var states = targets.Select(target => SessionResolver.LiveState(target.Paths, target.Record)).ToList();
+
+        while (states.Any(SessionStates.IsActive) && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(1000);
+
+            for (var index = 0; index < targets.Count; index++)
+            {
+                if (!SessionStates.IsActive(states[index]))
+                {
+                    continue;
+                }
+
+                var record = store.Load(targets[index].Paths);
+                targets[index] = (targets[index].Paths, record);
+                states[index] = SessionResolver.LiveState(targets[index].Paths, record);
+            }
+        }
+
+        var envelope = new Envelope
+        {
+            Command = "wait",
+            Workdir = workdir != null ? SessionStore.NormalizeWorkdir(workdir) : null,
+            State = states.All(state => string.Equals(state, states[0], StringComparison.Ordinal)) ? states[0] : "mixed",
+            PendingCount = targets.Sum(target => target.Record.PendingCount),
+            Resumable = states.Any(RunArtifacts.IsResumable),
+            Extra = writer =>
+            {
+                writer.WriteNumber("count", targets.Count);
+                writer.WriteStartArray("sessions");
+
+                for (var index = 0; index < targets.Count; index++)
+                {
+                    var (paths, record) = targets[index];
+                    var state = states[index];
+                    var runDirectory = SessionResolver.CurrentRunDirectory(paths, record);
+
+                    writer.WriteStartObject();
+                    writer.WriteString("session", record.Name);
+                    writer.WriteString("workdir", record.Workdir);
+                    writer.WriteString("state", state);
+                    writer.WriteNullableString("run_id", record.CurrentRun?.RunId);
+                    writer.WriteNullableString("run_dir", runDirectory);
+                    writer.WriteNullableString("result_file", Envelope.ExistingFile(runDirectory, RunArtifacts.ResultFile));
+                    writer.WriteNullableString("text_file", Envelope.ExistingFile(runDirectory, RunArtifacts.TextFile));
+                    writer.WriteNullableString("pending_file", Envelope.ExistingFile(runDirectory, RunArtifacts.PendingFile));
+                    writer.WriteNumber("pending_count", record.PendingCount);
+                    writer.WriteBoolean("resumable", RunArtifacts.IsResumable(state));
+                    writer.WriteBoolean("final_answer", record.FinalText != null);
+                    WriteCounters(writer, "run", record.CurrentRun?.Counters ?? new CountersRecord());
+                    WriteCounters(writer, "session_totals", record.Counters);
+                    writer.WriteEndObject();
+                }
+
+                writer.WriteEndArray();
+            }
+        };
+
+        var summary = string.Join("\n\n", targets.Select((target, index) => DescribeOutcome(target.Record, states[index], SessionResolver.CurrentRunDirectory(target.Paths, target.Record))));
+        var exitCode = states.Any(state => state == SessionStates.Failed) ? ErrorCode.RunFailed.ToExitCode() : 0;
+        return new CommandResult(envelope, summary, exitCode);
     }
 
     public static CommandResult Result(CommandLine commandLine)
@@ -355,10 +435,265 @@ internal static class SessionCommands
         var (paths, record) = SessionResolver.Resolve(store, commandLine.Required("name"), commandLine.Single("workdir"));
         var state = SessionResolver.LiveState(paths, record);
         var runDirectory = SessionResolver.CurrentRunDirectory(paths, record);
-        var result = FinishedResult("result", paths, record, state);
-        var text = runDirectory != null && File.Exists(RunArtifacts.TextFile(runDirectory)) ? File.ReadAllText(RunArtifacts.TextFile(runDirectory), Encoding.UTF8) : string.Empty;
+        var text = runDirectory != null && File.Exists(RunArtifacts.TextFile(runDirectory))
+            ? File.ReadAllText(RunArtifacts.TextFile(runDirectory), Encoding.UTF8)
+            : record.FinalText ?? string.Empty;
+
+        string? outputFile = null;
+
+        if (commandLine.Single("output") is { } output)
+        {
+            try
+            {
+                outputFile = Path.GetFullPath(output);
+                File.WriteAllText(outputFile, text, new UTF8Encoding(false));
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+            {
+                throw new SubordinateException(ErrorCode.InvalidArguments, $"The output file {output} could not be written: {ex.Message}");
+            }
+        }
+
+        var result = FinishedResult("result", paths, record, state, outputFile != null ? writer => writer.WriteString("output_file", outputFile) : null);
+
+        if (outputFile != null)
+        {
+            return result with { Summary = string.Create(CultureInfo.InvariantCulture, $"Wrote {text.Length} characters to {outputFile}.") };
+        }
+
+        if (text.Length > MaxInlineAnswerCharacters)
+        {
+            var textFile = runDirectory != null ? RunArtifacts.TextFile(runDirectory) : "result.md";
+            var summary = string.Create(CultureInfo.InvariantCulture, $"{text[..MaxInlineAnswerCharacters]}\n[Truncated at {MaxInlineAnswerCharacters} of {text.Length} characters. The full text is in {textFile}.]");
+            return result with { Summary = summary };
+        }
 
         return result with { Summary = text.Length > 0 ? text : result.Summary };
+    }
+
+    public static CommandResult Usage(CommandLine commandLine)
+    {
+        var home = SubordinateConfig.ResolveHome();
+        var since = ParseSince(commandLine.Single("since"));
+        var sessionFilter = commandLine.Single("session");
+        var modelFilter = commandLine.Single("model");
+        var workdirFilter = commandLine.Single("workdir") is { } workdir ? SessionStore.NormalizeWorkdir(workdir) : null;
+
+        var totals = new UsageTotals();
+        var byModel = new Dictionary<string, UsageTotals>(StringComparer.OrdinalIgnoreCase);
+        var byWorkdir = new Dictionary<string, UsageTotals>(StringComparer.OrdinalIgnoreCase);
+        var modelDetails = new Dictionary<string, (string Provider, string ModelId)>(StringComparer.OrdinalIgnoreCase);
+        var seenRuns = new HashSet<(string Session, string Workdir, string RunId)>();
+        var count = 0;
+        var skipped = 0;
+        DateTimeOffset? first = null;
+        DateTimeOffset? last = null;
+        var path = UsageLog.FilePath(home);
+
+        if (File.Exists(path))
+        {
+            foreach (var line in File.ReadLines(path))
+            {
+                if (string.IsNullOrWhiteSpace(line))
+                {
+                    continue;
+                }
+
+                UsageEntry? entry;
+
+                try
+                {
+                    entry = ParseUsageEntry(line);
+                }
+                catch (JsonException)
+                {
+                    skipped++;
+                    continue;
+                }
+
+                if (entry == null)
+                {
+                    skipped++;
+                    continue;
+                }
+
+                if (!seenRuns.Add((entry.Session, entry.Workdir, entry.RunId)))
+                {
+                    continue;
+                }
+
+                if (since.HasValue && entry.Timestamp < since.Value)
+                {
+                    continue;
+                }
+
+                if (sessionFilter != null && !string.Equals(entry.Session, sessionFilter, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                if (modelFilter != null && !string.Equals(entry.ModelAlias, modelFilter, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                if (workdirFilter != null && !string.Equals(entry.Workdir, workdirFilter, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                count++;
+                totals.Add(entry);
+                first = first == null || entry.Timestamp < first ? entry.Timestamp : first;
+                last = last == null || entry.Timestamp > last ? entry.Timestamp : last;
+                modelDetails[entry.ModelAlias] = (entry.ModelProvider, entry.ModelId);
+
+                if (!byModel.TryGetValue(entry.ModelAlias, out var modelTotals))
+                {
+                    modelTotals = new UsageTotals();
+                    byModel[entry.ModelAlias] = modelTotals;
+                }
+
+                modelTotals.Add(entry);
+
+                if (!byWorkdir.TryGetValue(entry.Workdir, out var workdirTotals))
+                {
+                    workdirTotals = new UsageTotals();
+                    byWorkdir[entry.Workdir] = workdirTotals;
+                }
+
+                workdirTotals.Add(entry);
+            }
+        }
+
+        var envelope = new Envelope
+        {
+            Command = "usage",
+            Workdir = workdirFilter,
+            Extra = writer =>
+            {
+                writer.WriteNullableString("since", since?.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture));
+                writer.WriteNullableString("session_filter", sessionFilter);
+                writer.WriteNullableString("model_filter", modelFilter);
+                writer.WriteNullableString("workdir_filter", workdirFilter);
+                writer.WriteNumber("count", count);
+                writer.WriteNumber("skipped_lines", skipped);
+                writer.WriteNullableString("first", first?.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture));
+                writer.WriteNullableString("last", last?.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture));
+                WriteUsageTotals(writer, "totals", totals);
+                writer.WriteStartArray("models");
+
+                foreach (var (alias, modelTotals) in byModel.OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase))
+                {
+                    writer.WriteStartObject();
+                    writer.WriteString("model", alias);
+
+                    if (modelDetails.TryGetValue(alias, out var details))
+                    {
+                        writer.WriteString("provider", details.Provider);
+                        writer.WriteString("model_id", details.ModelId);
+                    }
+
+                    WriteUsageTotalsProperties(writer, modelTotals);
+                    writer.WriteEndObject();
+                }
+
+                writer.WriteEndArray();
+                writer.WriteStartArray("workdirs");
+
+                foreach (var (workdir, workdirTotals) in byWorkdir.OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase))
+                {
+                    writer.WriteStartObject();
+                    writer.WriteString("workdir", workdir);
+                    WriteUsageTotalsProperties(writer, workdirTotals);
+                    writer.WriteEndObject();
+                }
+
+                writer.WriteEndArray();
+            }
+        };
+
+        var builder = new StringBuilder();
+
+        if (count == 0)
+        {
+            builder.Append("No usage matches the filters.");
+        }
+        else
+        {
+            builder.Append(CultureInfo.InvariantCulture, $"{count} run(s), {totals.ModelCalls} model calls, {totals.ToolCalls} tool calls, {totals.InputTokens} input tokens ({totals.CachedInputTokens} cached), {totals.OutputTokens} output tokens, {FormatDuration(totals.DurationSeconds)}.\n");
+            builder.Append("By model:\n");
+
+            foreach (var (alias, modelTotals) in byModel.OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase))
+            {
+                builder.Append(CultureInfo.InvariantCulture, $"  {alias}: {modelTotals.Runs} run(s), {modelTotals.ModelCalls} model calls, {modelTotals.InputTokens} input tokens ({modelTotals.CachedInputTokens} cached), {modelTotals.OutputTokens} output tokens\n");
+            }
+        }
+
+        return new CommandResult(envelope, builder.ToString().TrimEnd('\n'));
+    }
+
+    public static CommandResult Close(CommandLine commandLine)
+    {
+        var store = new SessionStore(SubordinateConfig.ResolveHome());
+        var (paths, _) = SessionResolver.Resolve(store, commandLine.Required("name"), commandLine.Single("workdir"));
+
+        using (var sessionLock = SessionLock.TryAcquire(paths) ?? throw new SubordinateException(ErrorCode.SessionBusy, "The session is running. Stop it before closing it."))
+        {
+            var record = store.Load(paths);
+            var ledger = new PendingLedger(record);
+            ledger.Close();
+            record.State = SessionStates.Finished;
+            record.Error = null;
+            record.QueuedMessage ??= "The session was closed by the supervisor. Pending items were dropped.";
+
+            if (record.CurrentRun is { } run)
+            {
+                run.State = SessionStates.Finished;
+                run.EndedAt ??= DateTimeOffset.UtcNow;
+            }
+
+            store.Save(paths, record);
+
+            var runDirectory = SessionResolver.CurrentRunDirectory(paths, record);
+
+            if (runDirectory != null)
+            {
+                RunArtifacts.WritePending(runDirectory, record);
+
+                if (record.CurrentRun is { } currentRun)
+                {
+                    var text = record.FinalText ?? "The session was closed by the supervisor. Pending items were dropped.";
+                    RunArtifacts.WriteResult(runDirectory, record, currentRun, text);
+                    WriteClosedStatus(runDirectory, record, currentRun);
+                }
+            }
+
+            var closed = record.Pending.Count(item => item.Status == PendingStatuses.Closed);
+            var envelope = Envelope.ForSession("close", record, runDirectory, writer => writer.WriteNumber("closed_pending", closed), record.State);
+            return new CommandResult(envelope, $"Closed session \"{record.Name}\". {closed} pending item(s) were dropped.");
+        }
+    }
+
+    private static void WriteClosedStatus(string runDirectory, SessionRecord record, RunRecord run)
+    {
+        var endedAt = run.EndedAt ?? DateTimeOffset.UtcNow;
+
+        RunArtifacts.WriteStatus(runDirectory, new StatusSnapshot
+        {
+            Session = record.Name,
+            Workdir = record.Workdir,
+            RunId = run.RunId,
+            State = SessionStates.Finished,
+            ProcessId = Environment.ProcessId,
+            StartedAt = run.StartedAt,
+            ElapsedSeconds = (endedAt - run.StartedAt).TotalSeconds,
+            PendingCount = record.PendingCount,
+            RunCounters = run.Counters,
+            SessionCounters = record.Counters,
+            TurnsRemaining = record.Limits.MaxTurns > 0 ? Math.Max(0, record.Limits.MaxTurns - run.Counters.ModelCalls) : 0,
+            LastActivity = "closed by the supervisor"
+        });
     }
 
     public static CommandResult Stop(CommandLine commandLine)
@@ -384,6 +719,14 @@ internal static class SessionCommands
 
         using (var sessionLock = SessionLock.TryAcquire(paths) ?? throw new SubordinateException(ErrorCode.SessionBusy, "The session is running. Stop it before deleting it."))
         {
+            File.Delete(paths.RecordFile);
+            File.Delete(paths.TranscriptFile);
+            File.Delete(paths.StopFile);
+
+            if (Directory.Exists(paths.RunsDirectory))
+            {
+                Directory.Delete(paths.RunsDirectory, true);
+            }
         }
 
         Directory.Delete(paths.Directory, true);
@@ -524,18 +867,17 @@ internal static class SessionCommands
         return new CommandResult(envelope, summary);
     }
 
-    private static CommandResult FinishedResult(string command, SessionPaths paths, SessionRecord record, string state)
+    private static CommandResult FinishedResult(string command, SessionPaths paths, SessionRecord record, string state, Action<Utf8JsonWriter>? extra = null)
     {
         var runDirectory = SessionResolver.CurrentRunDirectory(paths, record);
         var errorRecord = record.Error;
         var envelope = Envelope.ForSession(command, record, runDirectory, writer =>
         {
-            writer.WriteNumber("model_calls", record.Counters.ModelCalls);
-            writer.WriteNumber("tool_calls", record.Counters.ToolCalls);
-            writer.WriteNumber("input_tokens", record.Counters.InputTokens);
-            writer.WriteNumber("cached_input_tokens", record.Counters.CachedInputTokens);
-            writer.WriteNumber("output_tokens", record.Counters.OutputTokens);
+            WriteCounters(writer, "run", record.CurrentRun?.Counters ?? new CountersRecord());
+            WriteCounters(writer, "session_totals", record.Counters);
+            writer.WriteBoolean("final_answer", record.FinalText != null);
             writer.WriteStringArray("files_written", record.FilesWritten);
+            extra?.Invoke(writer);
 
             if (errorRecord != null)
             {
@@ -557,9 +899,17 @@ internal static class SessionCommands
 
         switch (state)
         {
+            case SessionStates.Starting:
+            case SessionStates.Running:
+            {
+                builder.Append(" The session is still running. Call 'subordinate wait' again to keep blocking.");
+                break;
+            }
             case SessionStates.Finished:
             {
-                builder.Append(" The final answer follows and is also in result.md.");
+                builder.Append(record.FinalText != null
+                    ? " The final answer follows and is also in result.md."
+                    : " The run finished. See result.md for details.");
                 break;
             }
             case SessionStates.AwaitingApproval:
@@ -595,7 +945,7 @@ internal static class SessionCommands
             builder.Append(CultureInfo.InvariantCulture, $"\nRun directory: {runDirectory}");
         }
 
-        if (!string.IsNullOrWhiteSpace(record.FinalText))
+        if (!SessionStates.IsActive(state) && !string.IsNullOrWhiteSpace(record.FinalText))
         {
             var heading = state == SessionStates.Finished ? "Final answer" : "Last message from the subagent";
             var text = record.FinalText.Trim();
@@ -619,12 +969,13 @@ internal static class SessionCommands
     private static void WriteProgress(Utf8JsonWriter writer, SessionRecord record, JsonElement? status)
     {
         writer.WriteStartObject("progress");
-        writer.WriteNumber("model_calls", record.Counters.ModelCalls);
-        writer.WriteNumber("tool_calls", record.Counters.ToolCalls);
 
-        if (status is { } element)
+        if (status is { ValueKind: JsonValueKind.Object } element)
         {
-            foreach (var property in new[] { "elapsed_seconds", "last_activity", "updated_at", "pid", "input_tokens", "cached_input_tokens", "output_tokens" })
+            WriteStatusCounters(writer, element, "run", record.CurrentRun?.Counters ?? new CountersRecord());
+            WriteStatusCounters(writer, element, "session_totals", record.Counters);
+
+            foreach (var property in new[] { "elapsed_seconds", "last_activity", "updated_at", "pid", "turns_remaining" })
             {
                 if (element.TryGetProperty(property, out var value))
                 {
@@ -633,13 +984,60 @@ internal static class SessionCommands
                 }
             }
         }
+        else
+        {
+            WriteCounters(writer, "run", record.CurrentRun?.Counters ?? new CountersRecord());
+            WriteCounters(writer, "session_totals", record.Counters);
+        }
 
+        writer.WriteEndObject();
+    }
+
+    private static void WriteStatusCounters(Utf8JsonWriter writer, JsonElement status, string propertyName, CountersRecord fallback)
+    {
+        writer.WriteStartObject(propertyName);
+
+        if (status.TryGetProperty(propertyName, out var counters) && counters.ValueKind == JsonValueKind.Object)
+        {
+            writer.WriteNumber("model_calls", GetInt32(counters, "model_calls"));
+            writer.WriteNumber("tool_calls", GetInt32(counters, "tool_calls"));
+            writer.WriteNumber("input_tokens", GetInt64(counters, "input_tokens"));
+            writer.WriteNumber("cached_input_tokens", GetInt64(counters, "cached_input_tokens"));
+            writer.WriteNumber("output_tokens", GetInt64(counters, "output_tokens"));
+        }
+        else
+        {
+            writer.WriteNumber("model_calls", fallback.ModelCalls);
+            writer.WriteNumber("tool_calls", fallback.ToolCalls);
+            writer.WriteNumber("input_tokens", fallback.InputTokens);
+            writer.WriteNumber("cached_input_tokens", fallback.CachedInputTokens);
+            writer.WriteNumber("output_tokens", fallback.OutputTokens);
+        }
+
+        writer.WriteEndObject();
+    }
+
+    private static void WriteCounters(Utf8JsonWriter writer, string propertyName, CountersRecord counters)
+    {
+        writer.WriteStartObject(propertyName);
+        writer.WriteNumber("model_calls", counters.ModelCalls);
+        writer.WriteNumber("tool_calls", counters.ToolCalls);
+        writer.WriteNumber("input_tokens", counters.InputTokens);
+        writer.WriteNumber("cached_input_tokens", counters.CachedInputTokens);
+        writer.WriteNumber("output_tokens", counters.OutputTokens);
         writer.WriteEndObject();
     }
 
     private static string Read(JsonElement element, string property)
     {
         return element.TryGetProperty(property, out var value) ? value.ToString() : "?";
+    }
+
+    private static string Read(JsonElement element, string objectName, string property)
+    {
+        return element.TryGetProperty(objectName, out var nested) && nested.ValueKind == JsonValueKind.Object && nested.TryGetProperty(property, out var value)
+            ? value.ToString()
+            : "?";
     }
 
     private static RunLimits LimitsFor(SessionRecord record)
@@ -737,6 +1135,198 @@ internal static class SessionCommands
             {
                 yield return id;
             }
+        }
+    }
+
+    private static IEnumerable<string> SplitNames(IReadOnlyList<string> values)
+    {
+        foreach (var value in values)
+        {
+            foreach (var name in value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+            {
+                yield return name;
+            }
+        }
+    }
+
+    private static DateTimeOffset? ParseSince(string? text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return null;
+        }
+
+        var value = text.Trim();
+
+        if (value.Length >= 2 && char.IsAsciiDigit(value[0]))
+        {
+            var unit = char.ToLowerInvariant(value[^1]);
+
+            if (unit is 'm' or 'h' or 'd' or 'w' && int.TryParse(value[..^1], NumberStyles.None, CultureInfo.InvariantCulture, out var amount))
+            {
+                if (amount > 100_000)
+                {
+                    throw new SubordinateException(ErrorCode.InvalidArguments, "--since is too far in the past.");
+                }
+
+                var duration = unit switch
+                {
+                    'm' => TimeSpan.FromMinutes(amount),
+                    'h' => TimeSpan.FromHours(amount),
+                    'd' => TimeSpan.FromDays(amount),
+                    'w' => TimeSpan.FromDays(amount * 7),
+                    _ => TimeSpan.Zero
+                };
+
+                return DateTimeOffset.UtcNow - duration;
+            }
+        }
+
+        if (DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var timestamp))
+        {
+            return timestamp;
+        }
+
+        throw new SubordinateException(ErrorCode.InvalidArguments, "--since expects an ISO 8601 time such as 2026-11-01 or 2026-11-01T12:00:00Z, or a relative duration such as 30m, 24h, 7d or 2w.");
+    }
+
+    private static UsageEntry? ParseUsageEntry(string line)
+    {
+        using var document = JsonDocument.Parse(line);
+        var root = document.RootElement;
+
+        if (root.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+
+        var timestampText = GetString(root, "timestamp");
+        var runId = GetString(root, "run_id");
+        var session = GetString(root, "session");
+        var workdir = GetString(root, "workdir");
+        var modelAlias = GetString(root, "model_alias");
+        var modelProvider = GetString(root, "model_provider");
+        var modelId = GetString(root, "model_id");
+
+        if (timestampText == null || runId == null || session == null || workdir == null || modelAlias == null || modelProvider == null || modelId == null)
+        {
+            return null;
+        }
+
+        if (!DateTimeOffset.TryParse(timestampText, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var timestamp))
+        {
+            return null;
+        }
+
+        return new UsageEntry(
+            timestamp,
+            runId,
+            session,
+            workdir,
+            modelAlias,
+            modelProvider,
+            modelId,
+            GetDouble(root, "duration_seconds"),
+            GetInt32(root, "model_calls"),
+            GetInt32(root, "tool_calls"),
+            GetInt64(root, "input_tokens"),
+            GetInt64(root, "cached_input_tokens"),
+            GetInt64(root, "output_tokens"));
+    }
+
+    private static string? GetString(JsonElement element, string property)
+    {
+        return element.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+    }
+
+    private static int GetInt32(JsonElement element, string property)
+    {
+        return element.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var number) ? number : 0;
+    }
+
+    private static long GetInt64(JsonElement element, string property)
+    {
+        return element.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.Number && value.TryGetInt64(out var number) ? number : 0;
+    }
+
+    private static double GetDouble(JsonElement element, string property)
+    {
+        return element.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.Number && value.TryGetDouble(out var number) ? number : 0;
+    }
+
+    private static void WriteUsageTotals(Utf8JsonWriter writer, string propertyName, UsageTotals totals)
+    {
+        writer.WriteStartObject(propertyName);
+        WriteUsageTotalsProperties(writer, totals);
+        writer.WriteEndObject();
+    }
+
+    private static void WriteUsageTotalsProperties(Utf8JsonWriter writer, UsageTotals totals)
+    {
+        writer.WriteNumber("runs", totals.Runs);
+        writer.WriteNumber("model_calls", totals.ModelCalls);
+        writer.WriteNumber("tool_calls", totals.ToolCalls);
+        writer.WriteNumber("input_tokens", totals.InputTokens);
+        writer.WriteNumber("cached_input_tokens", totals.CachedInputTokens);
+        writer.WriteNumber("output_tokens", totals.OutputTokens);
+        writer.WriteNumber("duration_seconds", Math.Round(totals.DurationSeconds, 1));
+    }
+
+    private static string FormatDuration(double seconds)
+    {
+        if (seconds < 60)
+        {
+            return string.Create(CultureInfo.InvariantCulture, $"{seconds:F1} s");
+        }
+
+        if (seconds < 3600)
+        {
+            return string.Create(CultureInfo.InvariantCulture, $"{seconds / 60:F1} min");
+        }
+
+        return string.Create(CultureInfo.InvariantCulture, $"{seconds / 3600:F1} h");
+    }
+
+    private sealed record UsageEntry(
+        DateTimeOffset Timestamp,
+        string RunId,
+        string Session,
+        string Workdir,
+        string ModelAlias,
+        string ModelProvider,
+        string ModelId,
+        double DurationSeconds,
+        int ModelCalls,
+        int ToolCalls,
+        long InputTokens,
+        long CachedInputTokens,
+        long OutputTokens);
+
+    private sealed class UsageTotals
+    {
+        public int Runs { get; private set; }
+
+        public int ModelCalls { get; private set; }
+
+        public int ToolCalls { get; private set; }
+
+        public long InputTokens { get; private set; }
+
+        public long CachedInputTokens { get; private set; }
+
+        public long OutputTokens { get; private set; }
+
+        public double DurationSeconds { get; private set; }
+
+        public void Add(UsageEntry entry)
+        {
+            Runs++;
+            ModelCalls += entry.ModelCalls;
+            ToolCalls += entry.ToolCalls;
+            InputTokens += entry.InputTokens;
+            CachedInputTokens += entry.CachedInputTokens;
+            OutputTokens += entry.OutputTokens;
+            DurationSeconds += entry.DurationSeconds;
         }
     }
 

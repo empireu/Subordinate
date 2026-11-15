@@ -149,6 +149,21 @@ public sealed class PendingLedger(SessionRecord record)
         };
     }
 
+    public void Close()
+    {
+        foreach (var item in Record.Pending.Where(item => item.Status == PendingStatuses.Pending))
+        {
+            item.Status = PendingStatuses.Closed;
+            item.Delivered = true;
+            item.Decision = new DecisionRecord
+            {
+                DecidedAt = DateTimeOffset.UtcNow,
+                Scope = "once",
+                Reason = "The session was closed by the supervisor."
+            };
+        }
+    }
+
     public static string BuildDeferralMessage(PendingRecord item)
     {
         return $"PENDING APPROVAL {item.Id}: this call was not executed. Why: {string.Join("; ", item.Reasons)}. "
@@ -161,6 +176,11 @@ public sealed class PendingLedger(SessionRecord record)
     {
         var reason = string.IsNullOrWhiteSpace(item.Decision?.Reason) ? string.Empty : $" Reason: {item.Decision!.Reason}.";
         return $"DENIED {item.Id}: the supervisor denied this exact call.{reason} Do not retry it. Find another way, or explain in your final answer what you need.";
+    }
+
+    public static string BuildClosedMessage(PendingRecord item)
+    {
+        return $"CLOSED {item.Id}: the supervisor closed the session and dropped this call. It was not executed and will not be decided. Do not retry it unless the supervisor asks.";
     }
 
     public static string BuildDuplicateMessage(PendingRecord item)

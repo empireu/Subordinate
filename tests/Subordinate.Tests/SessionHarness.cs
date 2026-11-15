@@ -63,7 +63,7 @@ internal sealed class SessionHarness : IDisposable
         Store.Save(Paths, record);
     }
 
-    public async Task<(RunOutcome Outcome, SessionRecord Record)> RunAsync(ScriptedProvider provider)
+    public async Task<(RunOutcome Outcome, SessionRecord Record)> RunAsync(IChatProvider provider, RunLimits? limits = null, ICommandExecutor? executor = null)
     {
         var record = Load();
         var runId = Store.CreateRunDirectory(Paths, record.Runs.Count + 1, 10);
@@ -71,8 +71,8 @@ internal sealed class SessionHarness : IDisposable
         record.State = SessionStates.Starting;
         Store.Save(Paths, record);
 
-        var runner = new SessionRunner(Store, Paths, record, runId, provider, new ChatRequestOptions(), Executor);
-        var outcome = await runner.RunAsync(new RunLimits { MaxModelCalls = 10, MaxDuration = TimeSpan.FromMinutes(1) }, CancellationToken.None);
+        var runner = new SessionRunner(Store, Paths, record, runId, provider, new ChatRequestOptions(), executor ?? Executor);
+        var outcome = await runner.RunAsync(limits ?? new RunLimits { MaxModelCalls = 10, MaxDuration = TimeSpan.FromMinutes(1) }, CancellationToken.None);
         return (outcome, Load());
     }
 
@@ -141,6 +141,10 @@ internal sealed class ScriptedProvider(params ChatMessage[] responses) : IChatPr
 
     public List<List<ChatMessage>> Requests { get; } = [];
 
+    public List<ChatRequest> FullRequests { get; } = [];
+
+    public ChatUsage? Usage { get; set; }
+
     public string ProviderId => "scripted";
 
     public string? DefaultModel => "scripted";
@@ -149,11 +153,17 @@ internal sealed class ScriptedProvider(params ChatMessage[] responses) : IChatPr
     {
         await Task.Yield();
         Requests.Add(request.Messages.ToList());
+        FullRequests.Add(request);
 
         if (!_responses.TryDequeue(out var response))
         {
             yield return new StreamErrorEvent(new ChatError { Message = "The scripted provider has no more responses." });
             yield break;
+        }
+
+        if (Usage != null)
+        {
+            yield return new UsageReceivedEvent(Usage);
         }
 
         var finishReason = response.Contents.OfType<ToolCallContent>().Any() ? ChatFinishReason.ToolCalls : ChatFinishReason.Stop;
@@ -195,5 +205,81 @@ internal sealed class FakeExecutor : ICommandExecutor
             StandardOutput = new CapturedOutput(output, output.Length, false, null),
             StandardError = new CapturedOutput(string.Empty, 0, false, null)
         });
+    }
+}
+
+internal sealed class BlockingProvider(ChatMessage first, ChatMessage second) : IChatProvider
+{
+    public TaskCompletionSource SecondRequestStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public List<ChatRequest> Requests { get; } = [];
+
+    public string ProviderId => "blocking";
+
+    public string? DefaultModel => "blocking";
+
+    public async IAsyncEnumerable<ChatStreamEvent> StreamAsync(ChatRequest request, [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        await Task.Yield();
+        var index = Requests.Count;
+        Requests.Add(request);
+
+        ChatMessage response;
+
+        if (index == 0)
+        {
+            response = first;
+        }
+        else
+        {
+            SecondRequestStarted.TrySetResult();
+            await Release.Task.WaitAsync(cancellationToken);
+            response = second;
+        }
+
+        var finishReason = response.Contents.OfType<ToolCallContent>().Any() ? ChatFinishReason.ToolCalls : ChatFinishReason.Stop;
+        yield return new StreamCompletedEvent(finishReason, response);
+    }
+
+    public async Task<ChatMessage> CompleteAsync(ChatRequest request, CancellationToken cancellationToken)
+    {
+        await foreach (var streamEvent in StreamAsync(request, cancellationToken))
+        {
+            if (streamEvent is StreamCompletedEvent completed)
+            {
+                return completed.Message;
+            }
+        }
+
+        throw new InvalidOperationException("The blocking provider has no response.");
+    }
+}
+
+internal sealed class BlockingExecutor : ICommandExecutor
+{
+    public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public List<string> Commands { get; } = [];
+
+    public ShellKind Shell => ShellKind.Bash;
+
+    public async Task<CommandExecutionResult> ExecuteAsync(CommandExecutionRequest request, CancellationToken cancellationToken)
+    {
+        Commands.Add(request.Command);
+        Started.TrySetResult();
+        await Release.Task.WaitAsync(cancellationToken);
+        var output = $"ran: {request.Command}";
+
+        return new CommandExecutionResult
+        {
+            ExitCode = 0,
+            Duration = TimeSpan.FromMilliseconds(5),
+            StandardOutput = new CapturedOutput(output, output.Length, false, null),
+            StandardError = new CapturedOutput(string.Empty, 0, false, null)
+        };
     }
 }

@@ -10,19 +10,24 @@ public static class ShellClassifier
 {
     public const string ToolName = "shell";
 
+    private static readonly HashSet<string> SafeLocaleNames = new(StringComparer.Ordinal)
+    {
+        "LC_ALL", "LANG", "LANGUAGE", "LC_CTYPE", "LC_COLLATE", "LC_MESSAGES", "LC_NUMERIC", "LC_TIME", "TZ"
+    };
+
     public static ActionClassification Classify(string source, ShellKind shell, ClassificationScope scope)
+    {
+        return ClassifyInternal(source, shell, scope, 0);
+    }
+
+    private static ActionClassification ClassifyInternal(string source, ShellKind shell, ClassificationScope scope, int depth)
     {
         var sharedCapabilities = new HashSet<Capability> { Capability.Read };
         var sharedReasons = new List<string>();
         var units = new List<ActionUnit>();
 
-        foreach (var match in SensitivePaths.FindMatches(source))
-        {
-            sharedCapabilities.Add(Capability.Sensitive);
-            sharedReasons.Add($"the command references a credential store ({match})");
-        }
-
-        var parsed = Parse(source, shell, scope, out var parseError);
+        var effectiveSource = shell == ShellKind.Bash ? StripSafeLocaleAssignments(source) : source;
+        var parsed = Parse(effectiveSource, shell, scope, out var parseError);
 
         if (parsed == null)
         {
@@ -42,10 +47,13 @@ public static class ShellClassifier
         else
         {
             var accountedRegionArguments = FindAccountedRegionArguments(parsed);
+            string? workingDirectory = scope.WorkingDirectory;
 
             foreach (var occurrence in parsed.Commands)
             {
-                units.Add(ClassifyOccurrence(occurrence, scope, accountedRegionArguments));
+                var fallback = occurrence.Clause.Operator == CompoundOperator.AndIf ? workingDirectory : null;
+                units.Add(ClassifyOccurrence(occurrence, shell, scope, accountedRegionArguments, depth, fallback));
+                workingDirectory = UpdateWorkingDirectory(occurrence, workingDirectory, scope);
             }
         }
 
@@ -69,9 +77,7 @@ public static class ShellClassifier
             {
                 case ShellKind.Bash:
                 {
-                    var bashDirectory = ShellPaths.ToBashPath(scope.WorkingDirectory);
-
-                    if (bashDirectory == null)
+                    if (ShellPaths.ToBashPath(scope.WorkingDirectory) == null)
                     {
                         error = "the working directory cannot be expressed as a Git Bash path";
                         return null;
@@ -79,8 +85,8 @@ public static class ShellClassifier
 
                     var parser = new BashParser(new BashParserOptions
                     {
-                        WorkingDirectory = bashDirectory,
-                        InitialStateMode = BashInitialStateMode.Unknown
+                        WorkingDirectory = scope.WorkingDirectory,
+                        InitialStateMode = BashInitialStateMode.FreshNonInteractiveNoStartup
                     });
 
                     return parser.Parse(source);
@@ -91,7 +97,7 @@ public static class ShellClassifier
                     var parser = new PwshParser(new PwshParserOptions
                     {
                         WorkingDirectory = scope.WorkingDirectory,
-                        InitialStateMode = PwshInitialStateMode.Unknown,
+                        InitialStateMode = PwshInitialStateMode.IsolatedNonInteractiveNoProfile,
                         Dialect = shell == ShellKind.PowerShell7 ? PwshDialect.PowerShell7 : PwshDialect.WindowsPowerShell51
                     });
 
@@ -111,7 +117,7 @@ public static class ShellClassifier
         }
     }
 
-    private static ActionUnit ClassifyOccurrence(CommandOccurrence occurrence, ClassificationScope scope, IReadOnlyList<ClauseElement> accountedRegionArguments)
+    private static ActionUnit ClassifyOccurrence(CommandOccurrence occurrence, ShellKind shell, ClassificationScope scope, IReadOnlyList<ClauseElement> accountedRegionArguments, int depth, string? fallbackWorkingDirectory)
     {
         var capabilities = new HashSet<Capability> { Capability.Read };
         var reasons = new List<string>();
@@ -121,7 +127,6 @@ public static class ShellClassifier
             ? known.Words.Select(word => word.ToLowerInvariant()).ToArray()
             : [];
         var suspectWords = words.Skip(1).Any(word => word.StartsWith('-') || word.Contains('='));
-        var key = words.Length > 0 && !suspectWords ? PolicySet.NormalizeCommandWords(string.Join(" ", words)) : null;
 
         void Unbounded(string reason)
         {
@@ -130,12 +135,6 @@ public static class ShellClassifier
             {
                 reasons.Add(reason);
             }
-        }
-
-        if (suspectWords)
-        {
-            Unbounded($"the subcommand of `{display}` cannot be determined because an option comes before it");
-            words = [];
         }
 
         if (!occurrence.IsComplete)
@@ -161,7 +160,7 @@ public static class ShellClassifier
             }
         }
 
-        if (occurrence.Assignments.Count > 0)
+        if (occurrence.Assignments.Count > 0 && !AreSafeLocaleAssignments(occurrence.Assignments))
         {
             Unbounded($"`{display}` sets variables that can change how programs behave");
         }
@@ -181,9 +180,17 @@ public static class ShellClassifier
             };
         }
 
-        var baseDirectory = ResolveWorkingDirectory(occurrence.WorkingDirectory, scope);
+        var baseDirectory = ResolveWorkingDirectory(occurrence.WorkingDirectory, scope) ?? fallbackWorkingDirectory;
         var programWord = verb.CanonicalVerb ?? verb.Tokens[0];
         var program = CommandDatabase.NormalizeProgram(programWord);
+        var hasSubcommands = CommandDatabase.TryGet(program, out var baseRule) && baseRule.Subcommands != null;
+
+        if (suspectWords && hasSubcommands)
+        {
+            Unbounded($"the subcommand of `{display}` cannot be determined because an option comes before it");
+            words = [];
+        }
+
         var rule = ResolveRule(programWord, program, words, baseDirectory, scope, out var ruleReason);
 
         var arguments = new List<ArgumentView>();
@@ -212,6 +219,7 @@ public static class ShellClassifier
         {
             Program = program,
             Words = words,
+            RawElements = occurrence.Clause.Elements.Select(element => element.Raw).ToList(),
             Arguments = arguments,
             Role = occurrence.ImmediateRole,
             HasAuthoredStandardInput = hasAuthoredInput
@@ -252,6 +260,62 @@ public static class ShellClassifier
             }
         }
 
+        if (context.NestedCommands.Count > 0)
+        {
+            if (depth >= 2)
+            {
+                Unbounded("the command nests another command too deeply");
+            }
+            else
+            {
+                var nestedWrites = false;
+
+                foreach (var nested in context.NestedCommands)
+                {
+                    var nestedClassification = ClassifyInternal(nested, shell, scope, depth + 1);
+                    nestedWrites |= nestedClassification.AllCapabilities.Contains(Capability.Write);
+                    capabilities.UnionWith(nestedClassification.SharedCapabilities);
+
+                    foreach (var reason in nestedClassification.SharedReasons)
+                    {
+                        if (!reasons.Contains(reason))
+                        {
+                            reasons.Add(reason);
+                        }
+                    }
+
+                    foreach (var nestedUnit in nestedClassification.Units)
+                    {
+                        capabilities.UnionWith(nestedUnit.Capabilities);
+
+                        foreach (var reason in nestedUnit.Reasons)
+                        {
+                            if (!reasons.Contains(reason))
+                            {
+                                reasons.Add(reason);
+                            }
+                        }
+
+                        paths.AddRange(nestedUnit.Paths);
+                    }
+                }
+
+                if (context.NestedOperandsFromInput)
+                {
+                    var reason = nestedWrites
+                        ? $"`{display}` writes files named on standard input, which can be anywhere"
+                        : $"`{display}` reads files named on standard input, which can be anywhere";
+                    capabilities.Add(nestedWrites ? Capability.WriteOutside : Capability.ReadOutside);
+
+                    if (!reasons.Contains(reason))
+                    {
+                        reasons.Add(reason);
+                    }
+                }
+            }
+        }
+
+        var key = BuildKey(programWord, program, words, hasSubcommands, suspectWords, rule, context, occurrence, baseDirectory, scope);
         var operandAccess = rule?.Operands ?? OperandAccess.Read;
         var writeValueArguments = new HashSet<int>(context.WriteArguments);
 
@@ -308,6 +372,20 @@ public static class ShellClassifier
             {
                 paths.Add(new PathAccess(isWrite, candidate));
             }
+
+            if (candidates.Count == 0)
+            {
+                foreach (var match in SensitivePaths.FindMatches(analyzed.Argument.Raw))
+                {
+                    capabilities.Add(Capability.Sensitive);
+                    var reason = $"the command references a credential store ({match})";
+
+                    if (!reasons.Contains(reason))
+                    {
+                        reasons.Add(reason);
+                    }
+                }
+            }
         }
 
         foreach (var redirect in occurrence.Redirects)
@@ -329,6 +407,7 @@ public static class ShellClassifier
         }
 
         scope.ApplyPathCapabilities(paths, capabilities, reasons);
+        AddSensitivePaths(paths, baseDirectory, capabilities, reasons);
 
         return new ActionUnit
         {
@@ -338,6 +417,271 @@ public static class ShellClassifier
             Reasons = reasons,
             Paths = paths
         };
+    }
+
+    private static string? UpdateWorkingDirectory(CommandOccurrence occurrence, string? current, ClassificationScope scope)
+    {
+        if (occurrence.WorkingDirectoryEffect is ShellWorkingDirectoryEffect.ChangesOnSuccess changed && changed.Target is ShellValueDomain.Exact exact)
+        {
+            var resolved = ShellPaths.Resolve(exact.Value, current ?? scope.WorkingDirectory);
+            return resolved.Kind == ResolvedPathKind.Local ? resolved.Path : null;
+        }
+
+        if (occurrence.WorkingDirectoryEffect is ShellWorkingDirectoryEffect.Unknown)
+        {
+            return null;
+        }
+
+        return current;
+    }
+
+    private static string? BuildKey(string programWord, string program, IReadOnlyList<string> words, bool hasSubcommands, bool suspectWords, CommandRule? rule, RuleContext context, CommandOccurrence occurrence, string? baseDirectory, ClassificationScope scope)
+    {
+        if (rule?.IsInterpreter == true)
+        {
+            return BuildInterpreterKey(program, occurrence, baseDirectory, scope);
+        }
+
+        if (context.NestedCommands.Count > 0)
+        {
+            return null;
+        }
+
+        if (hasSubcommands)
+        {
+            if (suspectWords || words.Count == 0)
+            {
+                return null;
+            }
+
+            return PolicySet.NormalizeCommandWords(string.Join(" ", words));
+        }
+
+        return PolicySet.NormalizeCommandWords(program);
+    }
+
+    private static string? BuildInterpreterKey(string program, CommandOccurrence occurrence, string? baseDirectory, ClassificationScope scope)
+    {
+        if (program is "python" or "python3" or "py")
+        {
+            for (var index = 0; index < occurrence.Arguments.Count - 1; index++)
+            {
+                var argument = occurrence.Arguments[index];
+
+                if (argument.Argument.IsFlag && (argument.Argument.Raw == "-m" || argument.Argument.Raw == "--module"))
+                {
+                    var module = occurrence.Arguments[index + 1];
+
+                    if (module.Value is ShellValueDomain.Exact moduleValue)
+                    {
+                        return PolicySet.NormalizeCommandWords($"{program} -m {moduleValue.Value}");
+                    }
+
+                    return null;
+                }
+            }
+        }
+
+        if (program is "pwsh" or "powershell")
+        {
+            for (var index = 0; index < occurrence.Arguments.Count - 1; index++)
+            {
+                var argument = occurrence.Arguments[index];
+
+                if (argument.Argument.IsFlag && argument.Argument.Raw.Equals("-File", StringComparison.OrdinalIgnoreCase))
+                {
+                    return BuildScriptKey(program, occurrence.Arguments[index + 1], baseDirectory, scope);
+                }
+            }
+        }
+
+        var inlineFlags = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "-c", "-e", "-command", "-encodedcommand", "/c", "-p", "--eval", "--print" };
+        var operands = new List<AnalyzedArgument>();
+        var sawFlagBeforeOperand = false;
+
+        foreach (var argument in occurrence.Arguments)
+        {
+            if (argument.Argument.IsFlag)
+            {
+                if (inlineFlags.Contains(argument.Argument.Raw))
+                {
+                    return null;
+                }
+
+                if (operands.Count == 0)
+                {
+                    sawFlagBeforeOperand = true;
+                }
+
+                continue;
+            }
+
+            operands.Add(argument);
+        }
+
+        if (operands.Count == 0)
+        {
+            return PolicySet.NormalizeCommandWords(program);
+        }
+
+        if (sawFlagBeforeOperand)
+        {
+            return null;
+        }
+
+        return BuildScriptKey(program, operands[0], baseDirectory, scope);
+    }
+
+    private static string? BuildScriptKey(string program, AnalyzedArgument script, string? baseDirectory, ClassificationScope scope)
+    {
+        if (script.Value is not ShellValueDomain.Exact exact)
+        {
+            return null;
+        }
+
+        var resolved = ShellPaths.Resolve(exact.Value, baseDirectory);
+
+        if (resolved.Kind != ResolvedPathKind.Local)
+        {
+            return null;
+        }
+
+        var path = resolved.Path!;
+
+        if (scope.IsInsideWorkdir(path))
+        {
+            path = Path.GetRelativePath(scope.Workdir, path);
+        }
+
+        path = path.Replace('\\', '/');
+
+        return PolicySet.NormalizeCommandWords($"{program} {path}");
+    }
+
+    private static void AddSensitivePaths(IEnumerable<PathAccess> paths, string? workingDirectory, HashSet<Capability> capabilities, List<string> reasons)
+    {
+        foreach (var access in paths)
+        {
+            foreach (var match in SensitivePaths.FindMatches(access.Path.Display))
+            {
+                capabilities.Add(Capability.Sensitive);
+                var reason = $"the command references a credential store ({match})";
+
+                if (!reasons.Contains(reason))
+                {
+                    reasons.Add(reason);
+                }
+            }
+        }
+
+        if (workingDirectory == null)
+        {
+            return;
+        }
+
+        foreach (var match in SensitivePaths.FindMatches(workingDirectory))
+        {
+            capabilities.Add(Capability.Sensitive);
+            var reason = $"the command runs in a credential store ({match})";
+
+            if (!reasons.Contains(reason))
+            {
+                reasons.Add(reason);
+            }
+        }
+    }
+
+    private static bool AreSafeLocaleAssignments(IReadOnlyList<ShellVariableAssignment> assignments)
+    {
+        foreach (var assignment in assignments)
+        {
+            if (!SafeLocaleNames.Contains(assignment.Name) || assignment.EffectiveValue is not ShellValueDomain.Exact)
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static string StripSafeLocaleAssignments(string source)
+    {
+        var index = 0;
+        var stripped = false;
+
+        while (true)
+        {
+            while (index < source.Length && char.IsWhiteSpace(source[index]))
+            {
+                index++;
+            }
+
+            var start = index;
+
+            while (index < source.Length && (char.IsAsciiLetterOrDigit(source[index]) || source[index] == '_'))
+            {
+                index++;
+            }
+
+            if (index == start || index >= source.Length || source[index] != '=')
+            {
+                return stripped ? source[start..] : source;
+            }
+
+            var name = source[start..index];
+            index++;
+
+            var valueStart = index;
+
+            while (index < source.Length && !char.IsWhiteSpace(source[index]) && source[index] is not (';' or '|' or '&' or '<' or '>'))
+            {
+                index++;
+            }
+
+            var value = source[valueStart..index];
+
+            if (!SafeLocaleNames.Contains(name) || !IsSimpleAssignmentValue(value))
+            {
+                return stripped ? source[start..] : source;
+            }
+
+            var next = index;
+
+            while (next < source.Length && char.IsWhiteSpace(source[next]))
+            {
+                next++;
+            }
+
+            if (next >= source.Length || source[next] is ';' or '|' or '&')
+            {
+                return stripped ? source[start..] : source;
+            }
+
+            stripped = true;
+        }
+    }
+
+    private static bool IsSimpleAssignmentValue(string value)
+    {
+        if (value.Length == 0)
+        {
+            return true;
+        }
+
+        if (value.Length >= 2 && ((value[0] == '"' && value[^1] == '"') || (value[0] == '\'' && value[^1] == '\'')))
+        {
+            value = value[1..^1];
+        }
+
+        foreach (var character in value)
+        {
+            if (!char.IsAsciiLetterOrDigit(character) && character is not ('_' or '.' or '-' or '/' or ':' or '+' or ','))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private static CommandRule? ResolveRule(string programWord, string program, IReadOnlyList<string> words, string? baseDirectory, ClassificationScope scope, out string? reason)

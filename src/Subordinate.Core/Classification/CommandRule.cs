@@ -102,6 +102,7 @@ public sealed class RuleContext
     private readonly List<(Capability Capability, string Reason)> _added = [];
     private readonly HashSet<int> _writeArguments = [];
     private readonly HashSet<int> _dataArguments = [];
+    private readonly List<string> _nestedCommands = [];
 
     public required string Program { get; init; }
 
@@ -109,6 +110,8 @@ public sealed class RuleContext
     ///     The command words, lowercased, or empty when the parser could not prove them.
     /// </summary>
     public required IReadOnlyList<string> Words { get; init; }
+
+    public required IReadOnlyList<string> RawElements { get; init; }
 
     public required IReadOnlyList<ArgumentView> Arguments { get; init; }
 
@@ -127,7 +130,24 @@ public sealed class RuleContext
 
     public IReadOnlySet<int> DataArguments => _dataArguments;
 
+    public IReadOnlyList<string> NestedCommands => _nestedCommands;
+
+    /// <summary>
+    ///     True when the nested commands also receive operands from standard input, which cannot be checked statically.
+    /// </summary>
+    public bool NestedOperandsFromInput { get; private set; }
+
     public IEnumerable<ArgumentView> Operands => Arguments.Where(argument => !argument.IsFlag);
+
+    public void AddNestedCommand(string command)
+    {
+        _nestedCommands.Add(command);
+    }
+
+    public void MarkNestedOperandsFromInput()
+    {
+        NestedOperandsFromInput = true;
+    }
 
     public void Add(Capability capability, string reason)
     {

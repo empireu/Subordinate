@@ -103,16 +103,18 @@ public static class CommandDatabase
             "basename", "dirname", "which", "type", "command", "where", ":", "clear", "exit", "return", "break", "continue", "read", "shift", "wait", "export");
         Add(ReadOnly(RefineSearch), "grep", "egrep", "fgrep", "rg", "ag", "ack", "fd", "findstr");
         Add(ReadOnly(), "cd", "pushd", "popd", "cat", "head", "tail", "less", "more", "wc", "tree", "ls", "dir",
-            "stat", "file", "du", "df", "realpath", "readlink", "cut", "tr", "nl", "column", "paste", "join", "comm", "diff", "cmp", "md5sum", "sha1sum", "sha256sum",
+            "stat", "file", "du", "df", "realpath", "readlink", "cut", "nl", "column", "paste", "join", "comm", "diff", "cmp", "md5sum", "sha1sum", "sha256sum",
             "sha512sum", "cksum", "base64", "xxd", "od", "hexdump", "strings", "jq", "yq", "tac", "rev", "fold", "fmt", "expand", "unexpand", "ps", "tasklist",
             "printenv", "fc", "systeminfo", "ver");
+        Add(ReadOnly(RefineTr), "tr");
         Add(ReadOnly(RefineFind), "find");
         Add(ReadOnly(RefineSed), "sed");
         Add(ReadOnly(RefineAwk), "awk", "gawk", "mawk");
         Add(new CommandRule { Operands = OperandAccess.Read, WriteValueFlags = new HashSet<string> { "-o", "--output" } }, "sort");
         Add(ReadOnly(RefineUniq), "uniq");
         Add(ReadOnly(RefineEnv), "env");
-        Add(new CommandRule { Capabilities = [Capability.Unclassified], Operands = OperandAccess.Read }, "xargs", "timeout", "nice", "nohup", "time", "watch", "mktemp", "parallel");
+        Add(ReadOnly(RefineXargs), "xargs");
+        Add(new CommandRule { Capabilities = [Capability.Unclassified], Operands = OperandAccess.Read }, "timeout", "nice", "nohup", "time", "watch", "mktemp", "parallel");
 
         Add(Writes(), "touch", "mkdir", "rmdir", "rm", "del", "erase", "mv", "move", "cp", "copy", "xcopy", "robocopy", "ln", "chmod", "truncate", "install", "tee", "patch",
             "zip", "unzip", "gzip", "gunzip", "bzip2", "xz", "7z", "attrib", "mklink", "rename", "ren");
@@ -703,6 +705,14 @@ public static class CommandDatabase
         }
     }
 
+    private static void RefineTr(RuleContext context)
+    {
+        foreach (var operand in context.Operands)
+        {
+            context.MarkData(operand);
+        }
+    }
+
     private static void RefineFind(RuleContext context)
     {
         if (context.HasFlag("-delete"))
@@ -710,14 +720,50 @@ public static class CommandDatabase
             context.Add(Capability.Write, "find -delete removes files");
         }
 
-        if (context.HasFlag("-exec", "-execdir", "-ok", "-okdir"))
-        {
-            context.Add(Capability.Unbounded, "find -exec runs another program for every match");
-        }
-
         if (context.HasFlag("-fprint", "-fprint0", "-fprintf", "-fls"))
         {
             context.Add(Capability.Write, "find -fprint writes a file");
+        }
+
+        var execFlags = new HashSet<string>(StringComparer.Ordinal) { "-exec", "-execdir", "-ok", "-okdir" };
+
+        for (var index = 0; index < context.Arguments.Count; index++)
+        {
+            var argument = context.Arguments[index];
+
+            if (!argument.IsFlag || !execFlags.Contains(argument.Text))
+            {
+                continue;
+            }
+
+            var parts = new List<string>();
+            var terminated = false;
+            var innerIndex = index + 1;
+
+            for (; innerIndex < context.Arguments.Count; innerIndex++)
+            {
+                var part = context.Arguments[innerIndex];
+                context.MarkData(part);
+
+                if (!part.IsFlag && (part.Text == ";" || part.Text == "\\;" || part.Text == "+"))
+                {
+                    terminated = true;
+                    break;
+                }
+
+                parts.Add(part.Raw.Replace("{}", "."));
+            }
+
+            if (terminated && parts.Count > 0)
+            {
+                context.AddNestedCommand(string.Join(" ", parts));
+            }
+            else
+            {
+                context.Add(Capability.Unbounded, "find -exec runs another program for every match");
+            }
+
+            index = innerIndex;
         }
 
         var patternFlags = new HashSet<string>(StringComparer.Ordinal) { "-name", "-iname", "-path", "-ipath", "-regex", "-iregex", "-wholename", "-iwholename", "-type", "-newer", "-perm", "-user", "-group", "-size", "-mtime", "-mmin", "-maxdepth", "-mindepth", "-printf" };
@@ -728,6 +774,61 @@ public static class CommandDatabase
             {
                 context.MarkData(context.Arguments[index + 1]);
             }
+        }
+    }
+
+    private static void RefineXargs(RuleContext context)
+    {
+        var valueFlags = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "-a", "--arg-file", "-d", "--delimiter", "-E", "--eof", "-I", "--replace", "-L", "--max-lines",
+            "-n", "--max-args", "-P", "--max-procs", "-s", "--max-chars", "--process-slot-var"
+        };
+
+        var argumentFile = context.ValueOf("-a", "--arg-file");
+
+        foreach (var argument in context.Arguments)
+        {
+            if (argumentFile == null || argument.Index != argumentFile.Index)
+            {
+                context.MarkData(argument);
+            }
+        }
+
+        var elements = context.RawElements.Skip(1).ToList();
+        var index = 0;
+
+        while (index < elements.Count)
+        {
+            var element = elements[index];
+
+            if (!element.StartsWith('-'))
+            {
+                break;
+            }
+
+            index += valueFlags.Contains(element) ? 2 : 1;
+        }
+
+        if (index >= elements.Count)
+        {
+            return;
+        }
+
+        var parts = new List<string>();
+
+        for (var inner = index; inner < elements.Count; inner++)
+        {
+            parts.Add(elements[inner].Replace("{}", "."));
+        }
+
+        context.AddNestedCommand(string.Join(" ", parts));
+
+        var innerProgram = NormalizeProgram(elements[index].Trim('\'', '"'));
+
+        if (!TryGet(innerProgram, out var innerRule) || innerRule.Operands != OperandAccess.Data)
+        {
+            context.MarkNestedOperandsFromInput();
         }
     }
 
@@ -811,13 +912,23 @@ public static class CommandDatabase
 
     private static void RefineAwk(RuleContext context)
     {
-        var program = context.Operands.FirstOrDefault();
-
         if (context.HasFlag("-f"))
         {
             context.Add(Capability.Unclassified, "awk -f runs a program from a file");
             return;
         }
+
+        foreach (var flag in new[] { "-v", "--assign", "-F", "--field-separator" })
+        {
+            var value = context.ValueOf(flag);
+
+            if (value != null)
+            {
+                context.MarkData(value);
+            }
+        }
+
+        var program = context.Operands.FirstOrDefault(operand => !context.DataArguments.Contains(operand.Index));
 
         if (program == null)
         {
@@ -826,10 +937,103 @@ public static class CommandDatabase
 
         context.MarkData(program);
 
-        if (program.Value == null || program.Value.Contains("system", StringComparison.Ordinal) || program.Value.Contains('|') || program.Value.Contains('>') || program.Value.Contains("getline", StringComparison.Ordinal))
+        if (program.Value == null || AwkProgramCanWriteOrExecute(program.Value))
         {
             context.Add(Capability.Unbounded, "the awk program may write files or run commands");
         }
+    }
+
+    private static bool AwkProgramCanWriteOrExecute(string program)
+    {
+        if (program.Contains("system", StringComparison.Ordinal) || program.Contains("getline", StringComparison.Ordinal) || program.Contains("@load", StringComparison.Ordinal) || program.Contains("@include", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        var inString = false;
+        var inRegex = false;
+        var escaped = false;
+
+        for (var index = 0; index < program.Length; index++)
+        {
+            var character = program[index];
+
+            if (escaped)
+            {
+                escaped = false;
+                continue;
+            }
+
+            if (character == '\\')
+            {
+                escaped = true;
+                continue;
+            }
+
+            if (inString)
+            {
+                if (character == '"')
+                {
+                    inString = false;
+                }
+
+                continue;
+            }
+
+            if (inRegex)
+            {
+                if (character == '/')
+                {
+                    inRegex = false;
+                }
+
+                continue;
+            }
+
+            if (character == '"')
+            {
+                inString = true;
+                continue;
+            }
+
+            if (character == '/')
+            {
+                inRegex = true;
+                continue;
+            }
+
+            if (character == '|')
+            {
+                if (index + 1 < program.Length && program[index + 1] == '|')
+                {
+                    index++;
+                    continue;
+                }
+
+                return true;
+            }
+
+            if (character == '>' && AwkStatementStartsWithPrint(program, index))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool AwkStatementStartsWithPrint(string program, int index)
+    {
+        var start = index - 1;
+
+        while (start >= 0 && program[start] is not (';' or '{' or '}' or '\n'))
+        {
+            start--;
+        }
+
+        var statement = program[(start + 1)..index].TrimStart();
+
+        return statement.StartsWith("print", StringComparison.Ordinal) || statement.StartsWith("printf", StringComparison.Ordinal);
     }
 
     private static void RefineUniq(RuleContext context)
@@ -914,26 +1118,39 @@ public static class CommandDatabase
                 var path = value.Text.StartsWith('@') ? value.Text[1..] : value.Text;
                 var sensitive = SensitivePaths.FindMatches(path);
                 context.Add(Capability.Dangerous, $"curl sends the contents of a local file ({path}) over the network" + (sensitive.Count > 0 ? ", and the file is a credential store" : string.Empty));
+
+                if (sensitive.Count > 0)
+                {
+                    context.Add(Capability.Sensitive, $"curl sends a credential store ({path}) over the network");
+                }
             }
         }
     }
 
     private static void RefineInterpreter(RuleContext context)
     {
-        var hasOperand = context.Operands.Any();
+        var operands = context.Operands.ToList();
         var hasInlineCode = context.HasFlag("-c", "-e", "-Command", "-command", "-EncodedCommand", "-encodedcommand", "/c", "/C", "-p", "--eval", "--print");
+        var hasModule = (context.Program is "python" or "python3" or "py") && context.HasFlag("-m", "--module");
 
-        if (!hasOperand && !hasInlineCode && !context.HasAuthoredStandardInput && context.Role == CommandOccurrenceRole.PipelineStage)
+        if (operands.Count == 0 && !hasInlineCode && !context.HasAuthoredStandardInput && context.Role == CommandOccurrenceRole.PipelineStage)
         {
             context.Add(Capability.Dangerous, $"{context.Program} executes whatever the previous pipeline stage produces");
         }
 
-        if (hasInlineCode)
+        if (hasInlineCode || hasModule)
         {
-            foreach (var operand in context.Operands)
+            foreach (var operand in operands)
             {
                 context.MarkData(operand);
             }
+
+            return;
+        }
+
+        for (var index = 1; index < operands.Count; index++)
+        {
+            context.MarkData(operands[index]);
         }
     }
 }

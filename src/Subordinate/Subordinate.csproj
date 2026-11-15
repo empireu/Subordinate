@@ -20,6 +20,10 @@
     </PropertyGroup>
 
     <ItemGroup>
+        <InternalsVisibleTo Include="Subordinate.Tests" />
+    </ItemGroup>
+
+    <ItemGroup>
         <ProjectReference Include="..\Subordinate.Core\Subordinate.Core.csproj" />
     </ItemGroup>
 

@@ -22,6 +22,7 @@ public static class PendingStatuses
     public const string Pending = "pending";
     public const string Approved = "approved";
     public const string Denied = "denied";
+    public const string Closed = "closed";
 }
 
 public static class FrameStates
@@ -185,6 +186,10 @@ public sealed class RunRecord
     public DateTimeOffset? EndedAt { get; set; }
 
     public string State { get; set; } = string.Empty;
+
+    public CountersRecord Counters { get; set; } = new();
+
+    public bool FinalTurnForced { get; set; }
 }
 
 public sealed class CountersRecord

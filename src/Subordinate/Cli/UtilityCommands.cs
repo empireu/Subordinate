@@ -139,15 +139,35 @@ internal static class UtilityCommands
 
         if (config != null)
         {
-            try
+            var requested = commandLine.Single("model");
+            var aliases = requested != null
+                ? new List<string> { requested }
+                : config.Models.Keys.Order(StringComparer.Ordinal).ToList();
+
+            if (aliases.Count == 0)
             {
-                var (alias, model, provider) = config.ResolveModel(commandLine.Single("model"));
-                SubordinateConfig.CreateProvider(model.Provider, provider, model);
-                checks.Add(("model", true, $"{alias} is {model.Model} via {model.Provider}, API key present"));
+                checks.Add(("model", false, "No models are configured."));
             }
-            catch (SubordinateException ex)
+
+            foreach (var alias in aliases)
             {
-                checks.Add(("model", false, ex.Message));
+                try
+                {
+                    var (resolved, model, provider) = config.ResolveModel(alias);
+                    SubordinateConfig.CreateProvider(model.Provider, provider, model);
+                    var reasoning = string.IsNullOrWhiteSpace(model.ReasoningEffort) ? "default" : model.ReasoningEffort;
+                    var isDefault = string.Equals(config.DefaultModel, resolved, StringComparison.Ordinal);
+                    checks.Add(($"model:{alias}", true, $"{model.Model} via {model.Provider}, reasoning effort {reasoning}, API key present{(isDefault ? ", default" : string.Empty)}"));
+                }
+                catch (SubordinateException ex)
+                {
+                    checks.Add(($"model:{alias}", false, ex.Message));
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(config.DefaultModel))
+            {
+                checks.Add(("default_model", false, "No default_model is set; pass --model to start."));
             }
         }
 
@@ -218,17 +238,22 @@ internal static class UtilityCommands
           resume  --name N [--workdir D] [--approve ID,ID] [--approve-session ID] [--deny ID[:reason]]
                   [--message TEXT | --message-file F] [--max-turns N] [--max-minutes M] [--wait]
           status  --name N [--workdir D]
-          wait    --name N [--workdir D] [--timeout-seconds S]
-          result  --name N [--workdir D]
+          wait    --name N[,N...] [--workdir D] [--timeout-seconds S]
+          result  --name N [--workdir D] [--output FILE]
+          close   --name N [--workdir D]
           stop    --name N [--workdir D]
           list    [--workdir D]
           delete  --name N [--workdir D]
           prune   [--older-than-days N] [--dry-run]
+          usage   [--since TIME] [--session N] [--model ALIAS] [--workdir D]
           classify --command TEXT [--shell bash] [--workdir D] [--policy P]
           doctor  [--model ALIAS]
           init
 
         Policy tokens: readonly, build, edit, read, read-outside, write, write-outside, exec, network,
         cmd:<command words>. Comma separated; repeat --policy to add more. Fixed for the life of the session.
+
+        Usage is appended to usage.jsonl in the Subordinate home and survives session deletion.
+        --since accepts an ISO 8601 time or a relative duration such as 30m, 24h, 7d or 2w.
         """;
 }

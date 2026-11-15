@@ -67,6 +67,17 @@ public sealed class Envelope
         };
     }
 
+    internal static string? ExistingFile(string? runDirectory, Func<string, string> path)
+    {
+        if (runDirectory == null)
+        {
+            return null;
+        }
+
+        var file = path(runDirectory);
+        return File.Exists(file) ? file : null;
+    }
+
     public string ToJson()
     {
         return AsciiJson.Write(writer =>
@@ -79,9 +90,9 @@ public sealed class Envelope
             writer.WriteNullableString("state", State);
             writer.WriteNullableString("run_id", RunId);
             writer.WriteNullableString("run_dir", RunDirectory);
-            writer.WriteNullableString("result_file", RunDirectory == null ? null : RunArtifacts.ResultFile(RunDirectory));
-            writer.WriteNullableString("text_file", RunDirectory == null ? null : RunArtifacts.TextFile(RunDirectory));
-            writer.WriteNullableString("pending_file", RunDirectory == null ? null : RunArtifacts.PendingFile(RunDirectory));
+            writer.WriteNullableString("result_file", ExistingFile(RunDirectory, RunArtifacts.ResultFile));
+            writer.WriteNullableString("text_file", ExistingFile(RunDirectory, RunArtifacts.TextFile));
+            writer.WriteNullableString("pending_file", ExistingFile(RunDirectory, RunArtifacts.PendingFile));
 
             if (PendingCount.HasValue)
             {

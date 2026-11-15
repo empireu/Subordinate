@@ -51,6 +51,7 @@ public sealed class SessionRunner
     private readonly ICommandExecutor _executor;
     private readonly HashSet<string> _startedCallIds = [];
     private readonly Stopwatch _stopwatch = new();
+    private readonly object _statusLock = new();
 
     private CountingChatProvider? _counting;
     private AgentRunner<SubordinateContext>? _runner;
@@ -63,6 +64,12 @@ public sealed class SessionRunner
     private long _countedCachedInputTokens;
     private long _countedOutputTokens;
     private string _lastActivity = "starting";
+    private bool _warnedAboutLimit;
+    private bool _finalTurnForced;
+    private bool _forceFinalTurn;
+    private RunLimits? _limits;
+    private DateTimeOffset? _activeToolStartedAt;
+    private string? _activeToolName;
 
     public SessionRunner(SessionStore store, SessionPaths paths, SessionRecord record, string runId, IChatProvider provider, ChatRequestOptions requestOptions, ICommandExecutor executor)
     {
@@ -91,17 +98,39 @@ public sealed class SessionRunner
         return "subordinate-" + Convert.ToHexString(hash, 0, 16).ToLowerInvariant();
     }
 
+    private ChatRequestOptions CreateTurnOptions()
+    {
+        if (!_forceFinalTurn)
+        {
+            return _requestOptions;
+        }
+
+        return new ChatRequestOptions
+        {
+            Model = _requestOptions.Model,
+            Temperature = _requestOptions.Temperature,
+            MaxOutputTokens = _requestOptions.MaxOutputTokens,
+            ReasoningEffort = _requestOptions.ReasoningEffort,
+            ToolChoice = "none",
+            PromptCacheKey = _requestOptions.PromptCacheKey
+        };
+    }
+
     public string RunDirectory => _runDirectory;
 
     public async Task<RunOutcome> RunAsync(RunLimits limits, CancellationToken cancellationToken)
     {
         _stopwatch.Start();
+        _limits = limits;
+        _record.FinalText = null;
         Directory.CreateDirectory(_runDirectory);
         TryDelete(_paths.StopFile);
 
         using var stopSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         using var pollerSource = new CancellationTokenSource();
+        using var heartbeatSource = new CancellationTokenSource();
         var poller = PollStopRequestAsync(stopSource, pollerSource.Token);
+        var heartbeat = HeartbeatAsync(heartbeatSource.Token);
         string state;
         ErrorRecord? error = null;
 
@@ -126,12 +155,27 @@ public sealed class SessionRunner
         finally
         {
             await pollerSource.CancelAsync();
+            await heartbeatSource.CancelAsync();
 
             try
             {
                 await poller;
             }
             catch (OperationCanceledException)
+            {
+            }
+            catch (Exception)
+            {
+            }
+
+            try
+            {
+                await heartbeat;
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            catch (Exception)
             {
             }
         }
@@ -171,7 +215,7 @@ public sealed class SessionRunner
 
         var ledger = new PendingLedger(_record);
         _ledger = ledger;
-        var gate = new SubordinateGate(ledger, () => _runId, MarkExecutionStartingAsync);
+        var gate = new SubordinateGate(ledger, () => _runId, MarkExecutionStartingAsync) { RefuseNewCalls = () => _forceFinalTurn };
         var agent = new SubordinateAgent(shell, gate);
         _counting = new CountingChatProvider(_provider);
         _runner = new AgentRunner<SubordinateContext>(
@@ -181,7 +225,7 @@ public sealed class SessionRunner
             _context,
             NullEventManager.Instance,
             cancellationToken,
-            AgentRunner.ICompletionFactory.Wrap(() => _requestOptions));
+            AgentRunner.ICompletionFactory.Wrap(CreateTurnOptions));
 
         var inflightCallIds = new HashSet<string>();
 
@@ -194,6 +238,7 @@ public sealed class SessionRunner
         var updates = await DeliverDecisionsAsync(agent, gate, ledger, inflightCallIds, cancellationToken);
         var updateInserted = false;
         var modelCallsAtStart = _counting.ModelCalls;
+        var warningThreshold = Math.Min(10, Math.Max(1, limits.MaxModelCalls / 4));
 
         _record.State = SessionStates.Running;
         Persist();
@@ -228,15 +273,40 @@ public sealed class SessionRunner
                 return SessionStates.LimitReached;
             }
 
-            if (_runner.ActiveToolCalls.Count == 0 && _counting.ModelCalls - modelCallsAtStart >= limits.MaxModelCalls)
+            var modelCallsThisRun = _counting.ModelCalls - modelCallsAtStart;
+
+            if (_runner.ActiveToolCalls.Count == 0 && modelCallsThisRun >= limits.MaxModelCalls)
             {
-                _lastActivity = "turn limit reached";
-                return SessionStates.LimitReached;
+                if (_finalTurnForced)
+                {
+                    _lastActivity = "turn limit reached";
+                    return SessionStates.LimitReached;
+                }
+
+                _finalTurnForced = true;
+                _forceFinalTurn = true;
+
+                if (_record.CurrentRun != null)
+                {
+                    _record.CurrentRun.FinalTurnForced = true;
+                }
+
+                _lastActivity = "final turn requested";
+                _context.InsertUserMessage("[Supervisor update]\nThe turn limit is reached. Do not call tools. Give your final answer now, including what is done and what remains.");
+                Persist();
+            }
+            else if (_runner.ActiveToolCalls.Count == 0 && limits.MaxModelCalls > 2 && !_warnedAboutLimit && modelCallsThisRun >= limits.MaxModelCalls - warningThreshold)
+            {
+                _warnedAboutLimit = true;
+                var remaining = Math.Max(0, limits.MaxModelCalls - modelCallsThisRun);
+                _lastActivity = $"{remaining} model turns left";
+                _context.InsertUserMessage($"[Supervisor update]\nYou have {remaining} model turns left. Start converging on the final answer and stop exploring.");
+                Persist();
             }
 
             if (_runner.ActiveToolCalls.Count == 0)
             {
-                _lastActivity = "waiting for the model";
+                _lastActivity = _forceFinalTurn ? "waiting for the final answer" : "waiting for the model";
                 WriteStatus(SessionStates.Running);
             }
 
@@ -392,6 +462,12 @@ public sealed class SessionRunner
                         return RestoredToolCall.Completed(new ToolExecutionResult(frame.Tool, false, null, PendingLedger.BuildDenialMessage(item), null));
                     }
 
+                    if (item?.Status == PendingStatuses.Closed)
+                    {
+                        item.Delivered = true;
+                        return RestoredToolCall.Completed(new ToolExecutionResult(frame.Tool, false, null, PendingLedger.BuildClosedMessage(item), null));
+                    }
+
                     return RestoredToolCall.Deferred(new ToolDeferral(record.Text ?? string.Empty, item));
                 }
                 case FrameStates.Started:
@@ -544,6 +620,12 @@ public sealed class SessionRunner
     {
         _startedCallIds.Add(callId);
         _record.Counters.ToolCalls++;
+
+        if (_record.CurrentRun is { } run)
+        {
+            run.Counters.ToolCalls++;
+        }
+
         _record.Inflight = SnapshotInflight();
         _store.Save(_paths, _record);
         return Task.CompletedTask;
@@ -586,6 +668,7 @@ public sealed class SessionRunner
         }
 
         _store.Save(_paths, _record);
+        TryWritePending();
         WriteStatus(SessionStates.Running);
     }
 
@@ -593,6 +676,8 @@ public sealed class SessionRunner
     {
         if (_runner == null || _runner.ActiveToolCalls.Count == 0)
         {
+            _activeToolStartedAt = null;
+            _activeToolName = null;
             return null;
         }
 
@@ -620,6 +705,8 @@ public sealed class SessionRunner
             else if (_startedCallIds.Contains(running.CallId) || running is AgentToolFrame.PlainRunningFrame { StartedTask: not null })
             {
                 state.State = FrameStates.Started;
+                _activeToolStartedAt ??= DateTimeOffset.UtcNow;
+                _activeToolName = running.Tool.ToolId;
                 _lastActivity = $"running {running.Tool.ToolId}";
             }
             else
@@ -640,10 +727,24 @@ public sealed class SessionRunner
             return;
         }
 
-        _record.Counters.ModelCalls += _counting.ModelCalls - _countedModelCalls;
-        _record.Counters.InputTokens += _counting.InputTokens - _countedInputTokens;
-        _record.Counters.CachedInputTokens += _counting.CachedInputTokens - _countedCachedInputTokens;
-        _record.Counters.OutputTokens += _counting.OutputTokens - _countedOutputTokens;
+        var modelCalls = _counting.ModelCalls - _countedModelCalls;
+        var inputTokens = _counting.InputTokens - _countedInputTokens;
+        var cachedInputTokens = _counting.CachedInputTokens - _countedCachedInputTokens;
+        var outputTokens = _counting.OutputTokens - _countedOutputTokens;
+
+        _record.Counters.ModelCalls += modelCalls;
+        _record.Counters.InputTokens += inputTokens;
+        _record.Counters.CachedInputTokens += cachedInputTokens;
+        _record.Counters.OutputTokens += outputTokens;
+
+        if (_record.CurrentRun is { } run)
+        {
+            run.Counters.ModelCalls += modelCalls;
+            run.Counters.InputTokens += inputTokens;
+            run.Counters.CachedInputTokens += cachedInputTokens;
+            run.Counters.OutputTokens += outputTokens;
+        }
+
         _countedModelCalls = _counting.ModelCalls;
         _countedInputTokens = _counting.InputTokens;
         _countedCachedInputTokens = _counting.CachedInputTokens;
@@ -729,8 +830,13 @@ public sealed class SessionRunner
         {
             _store.Save(_paths, _record);
         }
-        catch (IOException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
+        }
+
+        if (run != null)
+        {
+            UsageLog.Append(_store.Home, _record, run);
         }
 
         _lastActivity = state switch
@@ -742,21 +848,21 @@ public sealed class SessionRunner
             _ => error?.Message ?? state
         };
 
+        WriteStatus(state);
+        TryWritePending();
+
         try
         {
-            WriteStatus(state);
-            RunArtifacts.WritePending(_runDirectory, _record);
-
             if (run != null)
             {
                 RunArtifacts.WriteResult(_runDirectory, _record, run, _record.FinalText ?? BuildFallbackText(state, error));
             }
-
-            RunArtifacts.AppendLog(_runDirectory, $"- [{Now()}] run ended: {state}");
         }
-        catch (IOException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
         }
+
+        RunArtifacts.AppendLog(_runDirectory, $"- [{Now()}] run ended: {state}");
     }
 
     private string? BuildFallbackText(string state, ErrorRecord? error)
@@ -772,28 +878,65 @@ public sealed class SessionRunner
 
     private void WriteStatus(string state)
     {
+        lock (_statusLock)
+        {
+            try
+            {
+                if (_activeToolStartedAt is { } started && _activeToolName is { } name)
+                {
+                    _lastActivity = $"running {name} for {(DateTimeOffset.UtcNow - started).TotalSeconds:F0}s";
+                }
+
+                RunArtifacts.WriteStatus(_runDirectory, new StatusSnapshot
+                {
+                    Session = _record.Name,
+                    Workdir = _record.Workdir,
+                    RunId = _runId,
+                    State = state,
+                    ProcessId = Environment.ProcessId,
+                    StartedAt = _record.CurrentRun?.StartedAt ?? DateTimeOffset.UtcNow,
+                    ElapsedSeconds = _stopwatch.Elapsed.TotalSeconds,
+                    PendingCount = _record.PendingCount,
+                    RunCounters = _record.CurrentRun?.Counters ?? new CountersRecord(),
+                    SessionCounters = _record.Counters,
+                    TurnsRemaining = TurnsRemaining(),
+                    LastActivity = _lastActivity
+                });
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
+            {
+            }
+        }
+    }
+
+    private void TryWritePending()
+    {
         try
         {
-            RunArtifacts.WriteStatus(_runDirectory, new StatusSnapshot
-            {
-                Session = _record.Name,
-                Workdir = _record.Workdir,
-                RunId = _runId,
-                State = state,
-                ProcessId = Environment.ProcessId,
-                StartedAt = _record.CurrentRun?.StartedAt ?? DateTimeOffset.UtcNow,
-                ElapsedSeconds = _stopwatch.Elapsed.TotalSeconds,
-                ModelCalls = _record.Counters.ModelCalls,
-                ToolCalls = _record.Counters.ToolCalls,
-                PendingCount = _record.PendingCount,
-                InputTokens = _record.Counters.InputTokens,
-                CachedInputTokens = _record.Counters.CachedInputTokens,
-                OutputTokens = _record.Counters.OutputTokens,
-                LastActivity = _lastActivity
-            });
+            RunArtifacts.WritePending(_runDirectory, _record);
         }
-        catch (IOException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
+        }
+    }
+
+    private int TurnsRemaining()
+    {
+        if (_limits == null || _limits.MaxModelCalls <= 0)
+        {
+            return 0;
+        }
+
+        var used = _record.CurrentRun?.Counters.ModelCalls ?? 0;
+        return Math.Max(0, _limits.MaxModelCalls - used);
+    }
+
+    private async Task HeartbeatAsync(CancellationToken cancellationToken)
+    {
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            await Task.Delay(1000, cancellationToken);
+            WriteStatus(SessionStates.Running);
         }
     }
 

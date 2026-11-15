@@ -22,17 +22,13 @@ public sealed class StatusSnapshot
 
     public required double ElapsedSeconds { get; init; }
 
-    public required int ModelCalls { get; init; }
-
-    public required int ToolCalls { get; init; }
-
     public required int PendingCount { get; init; }
 
-    public required long InputTokens { get; init; }
+    public required CountersRecord RunCounters { get; init; }
 
-    public required long CachedInputTokens { get; init; }
+    public required CountersRecord SessionCounters { get; init; }
 
-    public required long OutputTokens { get; init; }
+    public required int TurnsRemaining { get; init; }
 
     public required string LastActivity { get; init; }
 }
@@ -75,12 +71,14 @@ public static class RunArtifacts
             writer.WriteString("started_at", FormatTime(status.StartedAt));
             writer.WriteString("updated_at", FormatTime(DateTimeOffset.UtcNow));
             writer.WriteNumber("elapsed_seconds", Math.Round(status.ElapsedSeconds, 1));
-            writer.WriteNumber("model_calls", status.ModelCalls);
-            writer.WriteNumber("tool_calls", status.ToolCalls);
+            writer.WriteStartObject("run");
+            WriteCounters(writer, status.RunCounters);
+            writer.WriteEndObject();
+            writer.WriteStartObject("session_totals");
+            WriteCounters(writer, status.SessionCounters);
+            writer.WriteEndObject();
+            writer.WriteNumber("turns_remaining", status.TurnsRemaining);
             writer.WriteNumber("pending_count", status.PendingCount);
-            writer.WriteNumber("input_tokens", status.InputTokens);
-            writer.WriteNumber("cached_input_tokens", status.CachedInputTokens);
-            writer.WriteNumber("output_tokens", status.OutputTokens);
             writer.WriteString("last_activity", status.LastActivity);
             writer.WriteEndObject();
         }, true);
@@ -88,10 +86,22 @@ public static class RunArtifacts
         SessionStore.WriteAtomically(StatusFile(runDirectory), json + "\n");
     }
 
+    private static void WriteCounters(Utf8JsonWriter writer, CountersRecord counters)
+    {
+        writer.WriteNumber("model_calls", counters.ModelCalls);
+        writer.WriteNumber("tool_calls", counters.ToolCalls);
+        writer.WriteNumber("input_tokens", counters.InputTokens);
+        writer.WriteNumber("cached_input_tokens", counters.CachedInputTokens);
+        writer.WriteNumber("output_tokens", counters.OutputTokens);
+    }
+
     public static void WriteResult(string runDirectory, SessionRecord record, RunRecord run, string? text)
     {
         var textFile = TextFile(runDirectory);
         SessionStore.WriteAtomically(textFile, text ?? string.Empty);
+
+        var sessionStart = record.Runs.Count > 0 ? record.Runs[0].StartedAt : run.StartedAt;
+        var sessionEnd = run.EndedAt ?? DateTimeOffset.UtcNow;
 
         var json = AsciiJson.Write(writer =>
         {
@@ -104,12 +114,23 @@ public static class RunArtifacts
             writer.WriteBoolean("resumable", IsResumable(run.State));
             writer.WriteString("started_at", FormatTime(run.StartedAt));
             writer.WriteString("ended_at", FormatTime(run.EndedAt ?? DateTimeOffset.UtcNow));
+            writer.WriteBoolean("final_answer", record.FinalText != null);
+            writer.WriteStartObject("run");
+            writer.WriteString("kind", run.Kind);
             writer.WriteNumber("duration_seconds", Math.Round(((run.EndedAt ?? DateTimeOffset.UtcNow) - run.StartedAt).TotalSeconds, 1));
-            writer.WriteNumber("model_calls", record.Counters.ModelCalls);
-            writer.WriteNumber("tool_calls", record.Counters.ToolCalls);
-            writer.WriteNumber("input_tokens", record.Counters.InputTokens);
-            writer.WriteNumber("cached_input_tokens", record.Counters.CachedInputTokens);
-            writer.WriteNumber("output_tokens", record.Counters.OutputTokens);
+            WriteCounters(writer, run.Counters);
+            writer.WriteEndObject();
+            writer.WriteStartObject("session_totals");
+            writer.WriteString("started_at", FormatTime(sessionStart));
+            writer.WriteString("ended_at", FormatTime(sessionEnd));
+            writer.WriteNumber("duration_seconds", Math.Round((sessionEnd - sessionStart).TotalSeconds, 1));
+            WriteCounters(writer, record.Counters);
+            writer.WriteEndObject();
+            writer.WriteStartObject("limit");
+            writer.WriteNumber("max_turns", record.Limits.MaxTurns);
+            writer.WriteNumber("turns_used", run.Counters.ModelCalls);
+            writer.WriteBoolean("final_turn", run.FinalTurnForced);
+            writer.WriteEndObject();
             writer.WriteNumber("pending_count", record.PendingCount);
             writer.WriteString("pending_file", PendingFile(runDirectory));
             writer.WriteString("text_file", textFile);
@@ -215,7 +236,7 @@ public static class RunArtifacts
         {
             File.AppendAllText(LogFile(runDirectory), line + "\n", new UTF8Encoding(false));
         }
-        catch (IOException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
         }
     }

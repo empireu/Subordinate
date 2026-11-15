@@ -61,11 +61,15 @@ Each run writes into `sessions/<session>/runs/<run_id>/`:
 
 | File | Content |
 | --- | --- |
-| `status.json` | Live progress: state, pid, elapsed time, model and tool calls, tokens, last activity. |
-| `result.json` | Final state of the run, counters, pending count, files written. |
+| `status.json` | Live progress: state, pid, elapsed time, run counters, session totals, turns remaining, last activity. |
+| `result.json` | Final state of the run, run counters, session totals, limit details, pending count, files written, final answer flag. |
 | `result.md` | The subagent's final answer, or why the run stopped. |
 | `pending.json` / `pending.md` | Open pending items. Both carry the same ids. |
 | `log.md` | A readable log of tool calls and their first output lines. |
+
+The run counters are under `run`; the session totals are under `session_totals`. Both objects use the same counter names.
+
+`usage.jsonl` in the Subordinate home is append-only. Every finished run adds one JSON line with its model, state, duration and counters. It is not deleted with the session, so `usage` can still report sessions that are gone.
 
 ## Exit codes
 
@@ -100,12 +104,14 @@ start    --name N --policy P [--policy P2] (--prompt TEXT | --prompt-file F | --
 resume   --name N [--workdir D] [--approve ID,ID] [--approve-session ID] [--deny ID[:reason]]
          [--message TEXT | --message-file F] [--max-turns N] [--max-minutes M] [--wait]
 status   --name N [--workdir D]
-wait     --name N [--workdir D] [--timeout-seconds S]
-result   --name N [--workdir D]
+wait     --name N[,N...] [--workdir D] [--timeout-seconds S]
+result   --name N [--workdir D] [--output FILE]
+close    --name N [--workdir D]
 stop     --name N [--workdir D]
 list     [--workdir D]
 delete   --name N [--workdir D]
 prune    [--older-than-days N] [--dry-run]
+usage    [--since TIME] [--session N] [--model ALIAS] [--workdir D]
 classify --command TEXT [--shell bash] [--workdir D] [--policy P]
 doctor   [--model ALIAS]
 init
@@ -116,6 +122,16 @@ A session is identified by the pair (workdir, name). `--workdir` defaults to the
 `start` and `resume` return as soon as a detached worker process has taken the session. Follow the run with `status` or block on it with `wait`. Pass `--wait` to run in the foreground instead.
 
 When `wait` or a `--wait` run ends, the summary includes the subagent's final answer. When the session is waiting for approval, it includes the subagent's last message instead. Text past 20000 characters is cut, with a pointer to `result.md` for the rest.
+
+`wait --name a,b,c` waits for several sessions at once. Its JSON has a `sessions` array with one entry per name, and the top-level `state` is the common state when they agree or `mixed` when they do not. The summary includes each session's final answer or last message.
+
+`result --output FILE` writes the final answer to `FILE` without printing it twice. This is the easiest way to collect answers from a swarm of sessions.
+
+`close` drops every pending item without running the model and marks the session `finished`. Use it when the answer is already good enough and the blocked calls no longer matter. It does not invent a final answer. When the subagent already gave one, `result.md` keeps it and `final_answer` stays true. Otherwise `final_answer` is false and `result.md` records that the session was closed. `stop` is different: it asks a running session to stop and keeps it resumable.
+
+`usage` reads `usage.jsonl` and reports totals plus a breakdown by model alias and workdir. `--since` accepts an ISO 8601 time such as `2026-11-01` or `2026-11-01T12:00:00Z`, or a relative duration such as `30m`, `24h`, `7d` or `2w`. `--session`, `--model` and `--workdir` filter the log. The log survives `delete` and `prune`.
+
+`doctor` reports every configured model alias, its model id, provider, reasoning effort and whether its API key is available. Pass `--model ALIAS` to check one alias.
 
 `resume` without decisions continues an interrupted or limit-stopped run. Approving a call runs it exactly once, through the same gate, and gives its real output to the subagent. Denials are sticky: if the subagent retries the same call, it is refused without asking again.
 
@@ -140,11 +156,13 @@ Classification produces these facts, and a call runs only when the policy covers
 
 - `read`, `read-outside`, `write`, `write-outside`, `exec`, `network`: grantable by policy.
 - `unclassified`: the command is not in the command database. Only a `cmd:` token or a session approval covers it.
-- `unbounded`: the classifier cannot bound what the call does. Examples are loops, variables, `eval`, `find -exec`, background jobs, unresolvable paths, and options before a subcommand.
+- `unbounded`: the classifier cannot bound what the call does. Examples are loops, variables, `eval`, background jobs, unresolvable paths, and options before a subcommand.
 - `sensitive`: the command mentions a credential store, such as `~/.ssh`, `.env`, `.npmrc`, `~/.claude.json`, cloud credentials or key files.
 - `dangerous`: privilege changes, process control, destructive git operations, piping downloads into a shell, and similar.
 
 `unbounded`, `sensitive` and `dangerous` are once-only: they can never be granted for the session. Approvals involving paths outside the workdir are also proposed for one call only. Every pending item carries `needs_human: true` when it involves `write-outside`, `network`, `sensitive` or `dangerous`. A supervising agent should escalate those to the user instead of approving them itself.
+
+`find -exec` is classified through the command it runs, so it is bounded when that command is bounded. `xargs` takes its file arguments from standard input, so a nested command that reads or writes files needs `read-outside` or `write-outside`; `xargs echo` stays a plain read.
 
 Use `classify` to see how a command would be judged without running anything:
 
