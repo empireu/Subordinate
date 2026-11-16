@@ -1,0 +1,76 @@
+Current: Phase 0, step 8.
+
+# Plan
+
+## Phase 0: Preparation
+- [x] Read LINUX_PLAN.md, AGENTS.md and README.md, skim the section 4 files
+- [x] Confirm the tree is clean apart from LINUX_PLAN.md
+- [x] Confirm the commit message convention
+- [x] Create the cross-platform branch
+- [x] Create the diary files
+- [x] Write scripts/Invoke-WindowsBuild.ps1 without -Smoke
+- [x] Run the Windows baseline build and tests
+- [ ] Commit Adds Linux support plan, work diary and a build script that skips deployment
+
+## Phase 1: Test tooling and the Linux baseline
+- [ ] Add .gitattributes with *.sh text eol=lf
+- [ ] Write scripts/test-linux.sh and scripts/smoke.sh checks 1 to 6
+- [ ] Write scripts/wsl/setup-root.sh, setup-user.sh, Install-TestDistro.ps1, Invoke-LinuxTests.ps1 and Stop-TestDistro.ps1
+- [ ] Add -Smoke to Invoke-WindowsBuild.ps1 and verify LF line endings
+- [ ] Run the Windows smoke baseline
+- [ ] Run Install-TestDistro.ps1 and record the versions
+- [ ] Run the Linux baseline tests and record the failures
+- [ ] Confirm WSL stopped
+- [ ] Commit Adds scripts for testing on Linux through WSL
+
+## Phase 2: Platform abstraction with the Windows backend
+- [ ] Add PlatformFacts.cs and the SessionIdentityIsStable Windows test
+- [ ] Create Platform/ with the interfaces, PlatformServices, UnsupportedPlatform, WindowsPlatform, WindowsPathSemantics, WindowsShellEnvironment and ShellProbe
+- [ ] Turn ShellPaths and ShellLocator into facades and update the call sites
+- [ ] Add IDetachedProcessLauncher and WindowsDetachedProcessLauncher
+- [ ] Add the unsupported platform check to Program.Main and the empty-home check to ResolveHome
+- [ ] Verify on Windows
+- [ ] Commit Adds platform abstraction with a Windows backend
+
+## Phase 3: Linux paths
+- [ ] Add LinuxPathSemantics, LinuxPlatform and the LinuxShellEnvironment stub
+- [ ] Add TestPaths and LinuxPathSemanticsTests
+- [ ] Split the existing tests and add the Linux corpora
+- [ ] Add the Linux system prompt test
+- [ ] Verify on Windows and Linux
+- [ ] Commit Adds Linux path handling
+
+## Phase 4: Linux shells
+- [ ] Implement LinuxShellEnvironment.Locate and ProbeVersion
+- [ ] Make Doctor use SupportedShells
+- [ ] Add the Linux shell tests
+- [ ] Verify on Windows and Linux
+- [ ] Commit Adds Linux shell discovery
+
+## Phase 5: Linux build and deploy
+- [ ] Record the Windows project evaluation in NOTES.md
+- [ ] Add the Linux property group and DeployToSubordinateHomeLinux target
+- [ ] Verify on Windows and Linux
+- [ ] Commit Adds Linux publish and deploy target
+
+## Phase 6: Detached worker on Linux
+- [ ] Add LinuxDetachedProcessLauncher and wire the selector
+- [ ] Add smoke checks 7 and 8
+- [ ] Verify on Windows and Linux
+- [ ] Optional live run
+- [ ] Commit Adds detached worker launch on Linux
+
+## Phase 7: Linux hardening
+- [ ] Add the sensitive patterns and tests
+- [ ] Add the ps rule and corpus rows
+- [ ] Add LinuxRealPaths and the symlink check with tests
+- [ ] Verify on Windows and Linux
+- [ ] Commit Hardens classification for Linux
+
+## Phase 8: Documentation and final verification
+- [ ] Update README.md
+- [ ] Write LINUX_TESTING.md
+- [ ] Final verification on Windows and Linux with -Live
+- [ ] Update the diary
+- [ ] Commit Documents Linux support
+- [ ] Report to the owner
