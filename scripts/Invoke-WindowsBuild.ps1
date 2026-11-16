@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
     [switch]$Test,
+    [switch]$Smoke,
     [string]$Configuration = "Debug"
 )
 
@@ -10,6 +11,7 @@ $ErrorActionPreference = "Stop"
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
 $buildLog = Join-Path $env:TEMP "subordinate-build.log"
 $testLog = Join-Path $env:TEMP "subordinate-test.log"
+$smokeLog = Join-Path $env:TEMP "subordinate-smoke-windows.log"
 
 $env:SubordinateDeploying = "true"
 
@@ -62,6 +64,7 @@ $deployDirectory = Get-DeployDirectory
 $deployFingerprintBefore = Get-DeployFingerprint -Directory $deployDirectory
 $buildFailed = $false
 $testsFailed = $false
+$smokeFailed = $false
 $guardFailed = $false
 
 Push-Location $repositoryRoot
@@ -78,6 +81,22 @@ try {
 
         if ($LASTEXITCODE -ne 0) {
             $testsFailed = $true
+        }
+    }
+
+    if ($Smoke) {
+        $gitBash = Join-Path $env:ProgramFiles "Git\bin\bash.exe"
+
+        if (-not (Test-Path -LiteralPath $gitBash -PathType Leaf)) {
+            throw "Git Bash was not found at $gitBash."
+        }
+
+        $smokeScript = (Join-Path $repositoryRoot "scripts/smoke.sh").Replace('\', '/')
+        $binaryPath = (Join-Path $repositoryRoot "src/Subordinate/bin/$Configuration/net11.0/subordinate.exe").Replace('\', '/')
+        & $gitBash $smokeScript --binary $binaryPath *> $smokeLog
+
+        if ($LASTEXITCODE -ne 0) {
+            $smokeFailed = $true
         }
     }
 }
@@ -98,6 +117,10 @@ if ($Test) {
     Write-Output "Test log: $testLog"
 }
 
+if ($Smoke) {
+    Write-Output "Smoke log: $smokeLog"
+}
+
 Write-Output "Build summary:"
 Write-LogMatches -Path $buildLog -Pattern ': error |: warning |Build succeeded|Build FAILED|Warning\(s\)|Error\(s\)' -Last 30
 
@@ -106,7 +129,12 @@ if ($Test) {
     Write-LogMatches -Path $testLog -Pattern '^\s+Failed |Passed!|Failed!' -Last 40
 }
 
-if ($buildFailed -or $testsFailed -or $guardFailed) {
+if ($Smoke) {
+    Write-Output "Smoke summary:"
+    Write-LogMatches -Path $smokeLog -Pattern '^SMOKE ' -Last 100
+}
+
+if ($buildFailed -or $testsFailed -or $smokeFailed -or $guardFailed) {
     exit 1
 }
 

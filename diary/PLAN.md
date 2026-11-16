@@ -1,4 +1,4 @@
-Current: Phase 0, step 8.
+Current: Phase 1, step 8.
 
 # Plan
 
@@ -10,17 +10,17 @@ Current: Phase 0, step 8.
 - [x] Create the diary files
 - [x] Write scripts/Invoke-WindowsBuild.ps1 without -Smoke
 - [x] Run the Windows baseline build and tests
-- [ ] Commit Adds Linux support plan, work diary and a build script that skips deployment
+- [x] Commit Adds Linux support plan, work diary and a build script that skips deployment
 
 ## Phase 1: Test tooling and the Linux baseline
-- [ ] Add .gitattributes with *.sh text eol=lf
-- [ ] Write scripts/test-linux.sh and scripts/smoke.sh checks 1 to 6
-- [ ] Write scripts/wsl/setup-root.sh, setup-user.sh, Install-TestDistro.ps1, Invoke-LinuxTests.ps1 and Stop-TestDistro.ps1
-- [ ] Add -Smoke to Invoke-WindowsBuild.ps1 and verify LF line endings
-- [ ] Run the Windows smoke baseline
-- [ ] Run Install-TestDistro.ps1 and record the versions
-- [ ] Run the Linux baseline tests and record the failures
-- [ ] Confirm WSL stopped
+- [x] Add .gitattributes with *.sh text eol=lf
+- [x] Write scripts/test-linux.sh and scripts/smoke.sh checks 1 to 6
+- [x] Write scripts/wsl/setup-root.sh, setup-user.sh, Install-TestDistro.ps1, Invoke-LinuxTests.ps1 and Stop-TestDistro.ps1
+- [x] Add -Smoke to Invoke-WindowsBuild.ps1 and verify LF line endings
+- [x] Run the Windows smoke baseline
+- [x] Run Install-TestDistro.ps1 and record the versions
+- [x] Run the Linux baseline tests and record the failures
+- [x] Confirm WSL stopped
 - [ ] Commit Adds scripts for testing on Linux through WSL
 
 ## Phase 2: Platform abstraction with the Windows backend
