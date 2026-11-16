@@ -2,6 +2,8 @@
 
 Subordinate is a Windows and Linux CLI that lets a supervising agent (Claude Code) start and resume headless coding subagents. Every shell command the subagent proposes is classified deterministically and checked against a permission policy that is fixed when the session starts. Calls the policy does not cover are not executed. They become pending items with stable ids, and the supervisor approves or denies them by id on resume.
 
+**To install and use Subordinate, go to the [guide](GUIDE.md).**
+
 ## Build
 
 ```
