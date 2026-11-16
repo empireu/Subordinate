@@ -1,10 +1,15 @@
 # TODO
 
-Current: Phase 5, step 4.
+Current: Phase 6, step 5.
+
+## State
+- Phase 5 is committed as 3a0e6f6.
+- Phase 6 is verified on Windows and Linux. Detach smoke check passes. Optional live run skipped.
+- The next commit is Adds detached worker launch on Linux.
 
 ## Next actions
-1. Commit the Phase 5 work with the subject Adds Linux publish and deploy target.
-2. Start Phase 6: add LinuxDetachedProcessLauncher and the detach smoke checks.
+1. Commit Phase 6.
+2. Start Phase 7: add the sensitive patterns, the ps rule and the Linux symlink check.
 
 ## Questions for the owner
 - None.

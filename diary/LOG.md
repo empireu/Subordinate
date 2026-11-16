@@ -28,3 +28,13 @@
 - Phase 5: added the Linux property group and DeployToSubordinateHomeLinux target. The Windows evaluation is unchanged.
 - Phase 5: Windows verification passed. Build 0 warnings, 251 passed, 12 skipped, all 6 smoke checks passed, deploy guard passed.
 - Phase 5: Linux verification passed. Build succeeded, 237 passed, 0 failed, 7 skipped, 244 total. Deployed to /home/tester/.subordinate/bin/ and the deployed help returned ok:true. WSL stopped.
+- Phase 5: committed 3a0e6f6 Adds Linux publish and deploy target.
+- Phase 6: wrote LinuxDetachedProcessLauncher, wired it into DetachedProcess.Select, and added the detach and live checks to smoke.sh.
+- Phase 6: Windows verification passed. Build 0 warnings, 251 passed, 12 skipped, 6 smoke passes, detach and live skipped. Deploy guard passed.
+- Phase 6: first Linux smoke run failed the detach check at the final wait, which reported run_failed. The stop cancellation was wrapped as a SubordinateException.
+- Phase 6: fixed SessionRunner.RunAsync to report Stopped when the stop source is cancelled.
+- Phase 6: Windows re-verification passed after the stop fix. Build 0 warnings, 251 passed, 12 skipped, 6 smoke passes, deploy guard passed.
+- Phase 6: the first stop fix did not take effect because AgentRunner swallows the cancellation as FinishError. Added a second fix in SessionRunner.RunCoreAsync.
+- Phase 6: Windows re-verification after the second stop fix passed. Build 0 warnings, 251 passed, 12 skipped, 6 smoke passes, deploy guard passed.
+- Phase 6: Linux re-verification after the second stop fix passed. Build succeeded, 237 passed, 0 failed, 7 skipped, 244 total. SMOKE PASS detach. Live skipped. WSL stopped.
+- Phase 6: optional live run skipped by owner decision. The mandatory live run is Phase 8.

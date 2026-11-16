@@ -142,8 +142,15 @@ public sealed class SessionRunner
         }
         catch (SubordinateException ex)
         {
-            state = SessionStates.Failed;
-            error = new ErrorRecord { Code = ex.Code.ToToken(), Message = ex.Message };
+            if (stopSource.IsCancellationRequested)
+            {
+                state = SessionStates.Stopped;
+            }
+            else
+            {
+                state = SessionStates.Failed;
+                error = new ErrorRecord { Code = ex.Code.ToToken(), Message = ex.Message };
+            }
         }
         catch (OperationCanceledException)
         {
@@ -327,7 +334,7 @@ public sealed class SessionRunner
 
         if (_runner.FinishError != null)
         {
-            return SessionStates.Failed;
+            return cancellationToken.IsCancellationRequested ? SessionStates.Stopped : SessionStates.Failed;
         }
 
         return _record.PendingCount > 0 ? SessionStates.AwaitingApproval : SessionStates.Finished;

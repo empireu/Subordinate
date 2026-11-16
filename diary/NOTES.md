@@ -49,6 +49,31 @@
 - Windows verification: build 0 warnings, 251 passed, 12 skipped, all 6 smoke checks passed, deploy guard passed.
 - Linux verification: build succeeded, 237 passed, 0 failed, 7 skipped, 244 total. Deployed to /home/tester/.subordinate/bin/. The deployed binary is executable and help prints ok:true. WSL stopped.
 
+## Phase 6 (in progress)
+- LinuxDetachedProcessLauncher starts the worker with redirected pipes, closes the parent ends, disposes the Process and returns the Id. DetachCurrentProcess calls setsid and keeps a PosixSignalRegistration for SIGHUP in a static field.
+- DetachedProcess.Select now returns the Linux launcher on Linux.
+- smoke.sh accepts --live-config and has check 7 (detach) and check 8 (live).
+- Check 7 runs the start pipeline under timeout 30 via bash -c, expects under 15 seconds, checks the pid is alive, sid equals pid, tty is ?, resume exits 5, stop exits 0 and wait reports stopped.
+- Check 8 copies the live config to a second home with shells set to {}, runs the readonly ls prompt and the approval round trip, and checks hello.txt.
+- Windows verification: build 0 warnings, 251 passed, 12 skipped, 6 smoke passes, detach and live skipped as expected, deploy guard passed.
+- First Linux smoke run: all checks passed except detach. The final wait reported run_failed instead of stopped.
+- Cause: the stop request cancelled the model call, but the provider wrapped the cancellation as a SubordinateException with agent_error, so the runner's SubordinateException catch set failed.
+- Fix: SessionRunner.RunAsync now checks stopSource.IsCancellationRequested in the SubordinateException catch and reports Stopped. The change is platform neutral.
+- Windows re-verification after the stop fix: build 0 warnings, 251 passed, 12 skipped, 6 smoke passes, deploy guard passed.
+- The first stop fix did not take effect. AgentRunner swallows the cancellation as FinishError and returns CompletedWithError, so the SessionRunner SubordinateException catch never runs.
+- Second fix: SessionRunner.RunCoreAsync returns Stopped when FinishError is set and the run token is cancelled.
+- Windows re-verification after the second stop fix: build 0 warnings, 251 passed, 12 skipped, 6 smoke passes, deploy guard passed.
+- Final Linux result after the second fix: build succeeded, 237 passed, 0 failed, 7 skipped, 244 total. SMOKE PASS detach. Live skipped without --live-config. WSL stopped.
+- The optional Phase 6 live run was skipped. The mandatory live run is Phase 8.
+
+## Commits
+- Phase 0: cc03455 Adds Linux support plan, work diary and a build script that skips deployment
+- Phase 1: 1f02022 Adds scripts for testing on Linux through WSL
+- Phase 2: ce5fa9b Adds platform abstraction with a Windows backend
+- Phase 3: 47d88f5 Adds Linux path handling
+- Phase 4: d1aa5e6 Adds Linux shell discovery
+- Phase 5: 3a0e6f6 Adds Linux publish and deploy target
+
 ## Decisions
 - None yet.
 

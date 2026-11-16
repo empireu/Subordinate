@@ -1,4 +1,4 @@
-Current: Phase 5, step 4.
+Current: Phase 6, step 5.
 
 # Plan
 
@@ -51,12 +51,12 @@ Current: Phase 5, step 4.
 - [x] Record the Windows project evaluation in NOTES.md
 - [x] Add the Linux property group and DeployToSubordinateHomeLinux target
 - [x] Verify on Windows and Linux
-- [ ] Commit Adds Linux publish and deploy target
+- [x] Commit Adds Linux publish and deploy target
 
 ## Phase 6: Detached worker on Linux
-- [ ] Add LinuxDetachedProcessLauncher and wire the selector
-- [ ] Add smoke checks 7 and 8
-- [ ] Verify on Windows and Linux
+- [x] Add LinuxDetachedProcessLauncher and wire the selector
+- [x] Add smoke checks 7 and 8
+- [x] Verify on Windows and Linux
 - [ ] Optional live run
 - [ ] Commit Adds detached worker launch on Linux
 

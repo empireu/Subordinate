@@ -13,6 +13,11 @@ internal static class DetachedProcess
             return WindowsDetachedProcessLauncher.Instance;
         }
 
+        if (OperatingSystem.IsLinux())
+        {
+            return LinuxDetachedProcessLauncher.Instance;
+        }
+
         return UnsupportedDetachedProcessLauncher.Instance;
     }
 }

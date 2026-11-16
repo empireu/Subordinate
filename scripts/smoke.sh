@@ -2,6 +2,7 @@
 set -u
 
 binary=""
+live_config=""
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -11,6 +12,14 @@ while [ "$#" -gt 0 ]; do
                 exit 2
             fi
             binary="$2"
+            shift 2
+            ;;
+        --live-config)
+            if [ "$#" -lt 2 ]; then
+                printf 'Missing value for --live-config.\n' >&2
+                exit 2
+            fi
+            live_config="$2"
             shift 2
             ;;
         *)
@@ -54,6 +63,7 @@ mkdir -p "$home_directory" "$work_directory"
 
 listener_pid=""
 listener_output=""
+live_root=""
 
 cleanup() {
     if [ -n "$listener_pid" ]; then
@@ -61,6 +71,9 @@ cleanup() {
     fi
     if [ -n "$listener_output" ]; then
         rm -f "$listener_output"
+    fi
+    if [ -n "$live_root" ]; then
+        rm -rf "$live_root"
     fi
     rm -rf "$temp_directory"
 }
@@ -196,6 +209,119 @@ else
         pass failed-run
     else
         fail failed-run "wait exit $status"
+    fi
+fi
+
+if [ "$is_linux" -eq 0 ]; then
+    printf 'SMOKE SKIP detach: runs on Linux only.\n'
+elif [ -z "$hang_port" ]; then
+    printf 'SMOKE SKIP detach: python3 is not available or the listener did not start.\n'
+else
+    started_at=$SECONDS
+    output=$(timeout 30 bash -c '"$@" | cat' _ "$binary" start --name smoke-hang --policy readonly --prompt "Say hi." --workdir "$workdir" --model hang 2>&1)
+    status=$?
+    elapsed=$((SECONDS - started_at))
+
+    if [ "$status" -ne 0 ]; then
+        fail detach "start pipeline exit $status"
+    elif [ "$elapsed" -ge 15 ]; then
+        fail detach "start pipeline took $elapsed seconds"
+    else
+        pid=$(printf '%s' "$output" | grep -o '"pid":[0-9]*' | head -n 1 | grep -o '[0-9]*')
+
+        if [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; then
+            fail detach "worker pid $pid is not alive"
+        else
+            sid=$(ps -o sid= -p "$pid" | tr -d ' ')
+            tty=$(ps -o tty= -p "$pid" | tr -d ' ')
+
+            if [ "$sid" != "$pid" ] || [ "$tty" != "?" ]; then
+                fail detach "sid=$sid tty=$tty"
+            else
+                output=$("$binary" resume --name smoke-hang --workdir "$workdir" --message x 2>&1)
+                status=$?
+
+                if [ "$status" -ne 5 ]; then
+                    fail detach "resume exit $status"
+                else
+                    output=$("$binary" stop --name smoke-hang --workdir "$workdir" 2>&1)
+                    status=$?
+
+                    if [ "$status" -ne 0 ]; then
+                        fail detach "stop exit $status"
+                    else
+                        output=$("$binary" wait --name smoke-hang --workdir "$workdir" --timeout-seconds 60 2>&1)
+                        status=$?
+
+                        if [ "$status" -eq 0 ] && printf '%s' "$output" | grep -q '"state":"stopped"'; then
+                            pass detach
+                        else
+                            fail detach "wait exit $status"
+                        fi
+                    fi
+                fi
+            fi
+        fi
+    fi
+fi
+
+if [ -z "$live_config" ]; then
+    printf 'SMOKE SKIP live: no --live-config was given.\n'
+elif [ "$is_linux" -eq 0 ]; then
+    printf 'SMOKE SKIP live: runs on Linux only.\n'
+else
+    live_key=""
+
+    if command -v python3 >/dev/null 2>&1; then
+        live_key=$(python3 -c 'import json, sys; config = json.load(open(sys.argv[1])); model = config["models"][config["default_model"]]; print(config["providers"][model["provider"]].get("api_key_env", ""))' "$live_config" 2>/dev/null)
+    fi
+
+    if [ -z "$live_key" ] || [ -z "$(printenv "$live_key" 2>/dev/null)" ]; then
+        printf 'SMOKE SKIP live: the API key variable is not set.\n'
+    else
+        live_root=$(mktemp -d)
+        live_home="$live_root/home"
+        live_work="$live_root/work"
+        mkdir -p "$live_home" "$live_work"
+
+        python3 -c 'import json, sys; config = json.load(open(sys.argv[1])); config["shells"] = {}; json.dump(config, open(sys.argv[2], "w"))' "$live_config" "$live_home/config.json" 2>/dev/null
+
+        if [ ! -f "$live_home/config.json" ]; then
+            fail live "the configuration could not be copied"
+        else
+            printf 'hello\n' > "$live_work/a.txt"
+            export SUBORDINATE_HOME="$live_home"
+
+            output=$("$binary" start --name smoke-live --policy readonly --prompt "Use the shell tool to run ls, then report the file names you saw." --wait --max-turns 6 --workdir "$live_work" 2>&1)
+            status=$?
+
+            if [ "$status" -ne 0 ] || ! printf '%s' "$output" | grep -q '"state":"finished"' || ! printf '%s' "$output" | grep -q 'a.txt'; then
+                fail live "readonly run did not finish with a.txt"
+            else
+                output=$("$binary" start --name smoke-approve --policy readonly --prompt "Create a file named hello.txt that contains the word hi. Then report what you did." --wait --max-turns 6 --workdir "$live_work" 2>&1)
+                status=$?
+                rounds=0
+
+                while [ "$status" -eq 0 ] && printf '%s' "$output" | grep -q '"state":"awaiting_approval"' && [ "$rounds" -lt 3 ]; do
+                    run_dir=$(printf '%s' "$output" | grep -o '"run_dir":"[^"]*"' | head -n 1 | sed 's/^"run_dir":"//; s/"$//')
+                    pending_id=$(grep -o '"id":"[0-9a-f]\{10\}"' "$run_dir/pending.json" 2>/dev/null | head -n 1 | grep -o '[0-9a-f]\{10\}')
+
+                    if [ -z "$pending_id" ]; then
+                        break
+                    fi
+
+                    output=$("$binary" resume --name smoke-approve --approve "$pending_id" --wait --max-turns 6 --workdir "$live_work" 2>&1)
+                    status=$?
+                    rounds=$((rounds + 1))
+                done
+
+                if [ -f "$live_work/hello.txt" ]; then
+                    pass live
+                else
+                    fail live "hello.txt was not created"
+                fi
+            fi
+        fi
     fi
 fi
 
