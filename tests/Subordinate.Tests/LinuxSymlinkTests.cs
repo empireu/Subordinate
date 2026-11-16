@@ -21,6 +21,7 @@ public class LinuxSymlinkTests : IDisposable
         if (OperatingSystem.IsLinux())
         {
             Directory.CreateSymbolicLink(Path.Combine(_directory, "work", "escape"), "../outside");
+            Directory.CreateSymbolicLink(Path.Combine(_directory, "work", "dangling"), "../outside/newfile");
             Directory.CreateSymbolicLink(Path.Combine(_directory, "link"), "work");
         }
     }
@@ -66,7 +67,86 @@ public class LinuxSymlinkTests : IDisposable
     public void WritingThroughAnEscapingLinkNeedsWriteOutside()
     {
         var work = Path.Combine(_directory, "work");
-        var environment = new ToolEnvironment
+        var environment = CreateEnvironment(work);
+
+        var classification = FileToolPaths.Classify("write_file", "escape/x", true, environment);
+
+        Assert.Contains(Capability.WriteOutside, classification.AllCapabilities);
+    }
+
+    [LinuxFact]
+    public void ChangingIntoAnEscapingLinkNeedsReadOutside()
+    {
+        var work = Path.Combine(_directory, "work");
+        var classification = ShellClassifier.Classify("cd escape && cat x", ShellKind.Bash, new ClassificationScope
+        {
+            Workdir = work,
+            WorkingDirectory = work
+        });
+
+        Assert.Contains(Capability.ReadOutside, classification.AllCapabilities);
+    }
+
+    [LinuxFact]
+    public void ReadingAfterAnEscapingLinkNeedsReadOutside()
+    {
+        var work = Path.Combine(_directory, "work");
+        var classification = ShellClassifier.Classify("cat escape/../outside/x", ShellKind.Bash, new ClassificationScope
+        {
+            Workdir = work,
+            WorkingDirectory = work
+        });
+
+        Assert.Contains(Capability.ReadOutside, classification.AllCapabilities);
+    }
+
+    [LinuxFact]
+    public void WritingAfterAnEscapingLinkNeedsWriteOutside()
+    {
+        var work = Path.Combine(_directory, "work");
+        var classification = ShellClassifier.Classify("echo x > escape/../outside/x", ShellKind.Bash, new ClassificationScope
+        {
+            Workdir = work,
+            WorkingDirectory = work
+        });
+
+        Assert.Contains(Capability.WriteOutside, classification.AllCapabilities);
+    }
+
+    [LinuxFact]
+    public void WritingThroughADanglingLinkNeedsWriteOutside()
+    {
+        var work = Path.Combine(_directory, "work");
+        var classification = ShellClassifier.Classify("echo x > dangling", ShellKind.Bash, new ClassificationScope
+        {
+            Workdir = work,
+            WorkingDirectory = work
+        });
+
+        Assert.Contains(Capability.WriteOutside, classification.AllCapabilities);
+    }
+
+    [LinuxFact]
+    public void FileToolParentTraversalAfterAnEscapingLinkNeedsWriteOutside()
+    {
+        var work = Path.Combine(_directory, "work");
+        var classification = FileToolPaths.Classify("write_file", "escape/../outside/x", true, CreateEnvironment(work));
+
+        Assert.Contains(Capability.WriteOutside, classification.AllCapabilities);
+    }
+
+    [LinuxFact]
+    public void FileToolWritingThroughADanglingLinkNeedsWriteOutside()
+    {
+        var work = Path.Combine(_directory, "work");
+        var classification = FileToolPaths.Classify("write_file", "dangling", true, CreateEnvironment(work));
+
+        Assert.Contains(Capability.WriteOutside, classification.AllCapabilities);
+    }
+
+    private static ToolEnvironment CreateEnvironment(string work)
+    {
+        return new ToolEnvironment
         {
             Workdir = work,
             Shell = ShellKind.Bash,
@@ -75,10 +155,6 @@ public class LinuxSymlinkTests : IDisposable
             ReadableRoots = [],
             DefaultShellTimeoutSeconds = 1
         };
-
-        var classification = FileToolPaths.Classify("write_file", "escape/x", true, environment);
-
-        Assert.Contains(Capability.WriteOutside, classification.AllCapabilities);
     }
 
     public void Dispose()

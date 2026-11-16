@@ -10,6 +10,8 @@ public static class CommandDatabase
 {
     private static readonly Dictionary<string, CommandRule> Rules = Build();
 
+    private static readonly char[] PsValueOptionCharacters = ['C', 'U', 'u', 'p', 'o', 'G', 'g', 't'];
+
     public static bool TryGet(string program, out CommandRule rule)
     {
         return Rules.TryGetValue(program, out rule!);
@@ -708,8 +710,25 @@ public static class CommandDatabase
 
     private static void RefinePs(RuleContext context)
     {
-        foreach (var text in context.RawElements.Skip(1))
+        var elements = context.RawOperands;
+        var hasEnvironment = false;
+        var hasBsdX = false;
+        var hasUserFlag = false;
+
+        for (var index = 0; index < elements.Count; index++)
         {
+            var text = elements[index];
+
+            if (text.StartsWith("--", StringComparison.Ordinal))
+            {
+                if (text == "--sort" && index + 1 < elements.Count)
+                {
+                    index++;
+                }
+
+                continue;
+            }
+
             if (!text.StartsWith('-'))
             {
                 if (text.Contains('e'))
@@ -721,18 +740,34 @@ public static class CommandDatabase
                 continue;
             }
 
-            if (text.StartsWith("--", StringComparison.Ordinal))
-            {
-                continue;
-            }
-
             var flags = text[1..];
 
-            if (flags.Contains('e') && (flags.Contains('u') || flags.Contains('x')))
+            if (flags.Contains('e'))
             {
-                context.Add(Capability.Sensitive, "ps can print the environment of other processes");
-                return;
+                hasEnvironment = true;
             }
+
+            if (flags.Contains('x'))
+            {
+                hasBsdX = true;
+            }
+
+            if (flags.Contains('u') && (index + 1 >= elements.Count || elements[index + 1].StartsWith('-')))
+            {
+                hasUserFlag = true;
+            }
+
+            var valueIndex = flags.IndexOfAny(PsValueOptionCharacters);
+
+            if (valueIndex >= 0 && valueIndex == flags.Length - 1 && index + 1 < elements.Count)
+            {
+                index++;
+            }
+        }
+
+        if (hasEnvironment && (hasBsdX || hasUserFlag))
+        {
+            context.Add(Capability.Sensitive, "ps can print the environment of other processes");
         }
     }
 

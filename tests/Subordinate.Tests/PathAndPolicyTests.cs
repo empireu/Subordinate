@@ -1,8 +1,7 @@
 using Subordinate.Core.Classification;
 using Subordinate.Core.Json;
-using Subordinate.Core.Policy;
-
 using Subordinate.Core.Platform;
+using Subordinate.Core.Policy;
 
 namespace Subordinate.Tests;
 
@@ -118,5 +117,14 @@ public class PathAndPolicyTests
         Assert.NotEmpty(SensitivePaths.FindMatches("ls ~/.local/share/keyrings"));
         Assert.NotEmpty(SensitivePaths.FindMatches("cat /etc/shadow"));
         Assert.NotEmpty(SensitivePaths.FindMatches("cat /etc/gshadow"));
+    }
+
+    [Fact]
+    public void SensitivePathDetectionIncludesProcessTaskEnvironmentsAndShadowBackups()
+    {
+        Assert.NotEmpty(SensitivePaths.FindMatches("cat /proc/1234/task/5678/environ"));
+        Assert.NotEmpty(SensitivePaths.FindMatches("cat /proc/*/environ"));
+        Assert.NotEmpty(SensitivePaths.FindMatches("cat /etc/shadow-"));
+        Assert.NotEmpty(SensitivePaths.FindMatches("cat /etc/gshadow-"));
     }
 }

@@ -63,7 +63,7 @@ internal sealed class SessionHarness : IDisposable
         Store.Save(Paths, record);
     }
 
-    public async Task<(RunOutcome Outcome, SessionRecord Record)> RunAsync(IChatProvider provider, RunLimits? limits = null, ICommandExecutor? executor = null)
+    public async Task<(RunOutcome Outcome, SessionRecord Record)> RunAsync(IChatProvider provider, RunLimits? limits = null, ICommandExecutor? executor = null, CancellationToken cancellationToken = default)
     {
         var record = Load();
         var runId = Store.CreateRunDirectory(Paths, record.Runs.Count + 1, 10);
@@ -72,7 +72,7 @@ internal sealed class SessionHarness : IDisposable
         Store.Save(Paths, record);
 
         var runner = new SessionRunner(Store, Paths, record, runId, provider, new ChatRequestOptions(), executor ?? Executor);
-        var outcome = await runner.RunAsync(limits ?? new RunLimits { MaxModelCalls = 10, MaxDuration = TimeSpan.FromMinutes(1) }, CancellationToken.None);
+        var outcome = await runner.RunAsync(limits ?? new RunLimits { MaxModelCalls = 10, MaxDuration = TimeSpan.FromMinutes(1) }, cancellationToken);
         return (outcome, Load());
     }
 
@@ -254,6 +254,123 @@ internal sealed class BlockingProvider(ChatMessage first, ChatMessage second) : 
         }
 
         throw new InvalidOperationException("The blocking provider has no response.");
+    }
+}
+
+internal sealed class CancellationErrorProvider(ChatMessage first, ChatMessage second) : IChatProvider
+{
+    public TaskCompletionSource SecondRequestStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public List<ChatRequest> Requests { get; } = [];
+
+    public string ProviderId => "cancellation-error";
+
+    public string? DefaultModel => "cancellation-error";
+
+    public async IAsyncEnumerable<ChatStreamEvent> StreamAsync(ChatRequest request, [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        await Task.Yield();
+        var index = Requests.Count;
+        Requests.Add(request);
+
+        if (index == 0)
+        {
+            yield return new StreamCompletedEvent(GetFinishReason(first), first);
+            yield break;
+        }
+
+        SecondRequestStarted.TrySetResult();
+        var cancelled = false;
+
+        try
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            cancelled = true;
+        }
+
+        if (cancelled)
+        {
+            yield return new StreamErrorEvent(new ChatError { Message = "The request was cancelled.", Code = "cancelled", IsRetryable = false });
+            yield break;
+        }
+
+        yield return new StreamCompletedEvent(GetFinishReason(second), second);
+    }
+
+    public async Task<ChatMessage> CompleteAsync(ChatRequest request, CancellationToken cancellationToken)
+    {
+        await foreach (var streamEvent in StreamAsync(request, cancellationToken))
+        {
+            if (streamEvent is StreamCompletedEvent completed)
+            {
+                return completed.Message;
+            }
+        }
+
+        throw new InvalidOperationException("The cancellation provider has no completed message.");
+    }
+
+    private static ChatFinishReason GetFinishReason(ChatMessage message)
+    {
+        return message.Contents.OfType<ToolCallContent>().Any() ? ChatFinishReason.ToolCalls : ChatFinishReason.Stop;
+    }
+}
+
+internal sealed class ThrowingCancellationProvider(ChatMessage first, ChatMessage second) : IChatProvider
+{
+    public TaskCompletionSource SecondRequestStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    public List<ChatRequest> Requests { get; } = [];
+
+    public string ProviderId => "throwing-cancellation";
+
+    public string? DefaultModel => "throwing-cancellation";
+
+    public async IAsyncEnumerable<ChatStreamEvent> StreamAsync(ChatRequest request, [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        await Task.Yield();
+        var index = Requests.Count;
+        Requests.Add(request);
+
+        if (index == 0)
+        {
+            yield return new StreamCompletedEvent(GetFinishReason(first), first);
+            yield break;
+        }
+
+        SecondRequestStarted.TrySetResult();
+
+        try
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw new ChatProviderException(new ChatError { Message = "The request was cancelled.", Code = "cancelled", IsRetryable = false });
+        }
+
+        yield return new StreamCompletedEvent(GetFinishReason(second), second);
+    }
+
+    public async Task<ChatMessage> CompleteAsync(ChatRequest request, CancellationToken cancellationToken)
+    {
+        await foreach (var streamEvent in StreamAsync(request, cancellationToken))
+        {
+            if (streamEvent is StreamCompletedEvent completed)
+            {
+                return completed.Message;
+            }
+        }
+
+        throw new InvalidOperationException("The throwing cancellation provider has no completed message.");
+    }
+
+    private static ChatFinishReason GetFinishReason(ChatMessage message)
+    {
+        return message.Contents.OfType<ToolCallContent>().Any() ? ChatFinishReason.ToolCalls : ChatFinishReason.Stop;
     }
 }
 

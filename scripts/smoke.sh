@@ -63,11 +63,15 @@ mkdir -p "$home_directory" "$work_directory"
 
 listener_pid=""
 listener_output=""
+worker_pid=""
 live_root=""
 
 cleanup() {
     if [ -n "$listener_pid" ]; then
         kill "$listener_pid" 2>/dev/null || true
+    fi
+    if [ -n "$worker_pid" ]; then
+        kill "$worker_pid" 2>/dev/null || true
     fi
     if [ -n "$listener_output" ]; then
         rm -f "$listener_output"
@@ -228,6 +232,7 @@ else
         fail detach "start pipeline took $elapsed seconds"
     else
         pid=$(printf '%s' "$output" | grep -o '"pid":[0-9]*' | head -n 1 | grep -o '[0-9]*')
+        worker_pid="$pid"
 
         if [ -z "$pid" ] || ! kill -0 "$pid" 2>/dev/null; then
             fail detach "worker pid $pid is not alive"
@@ -254,6 +259,7 @@ else
                         status=$?
 
                         if [ "$status" -eq 0 ] && printf '%s' "$output" | grep -q '"state":"stopped"'; then
+                            worker_pid=""
                             pass detach
                         else
                             fail detach "wait exit $status"
@@ -276,7 +282,11 @@ else
         live_key=$(python3 -c 'import json, sys; config = json.load(open(sys.argv[1])); model = config["models"][config["default_model"]]; print(config["providers"][model["provider"]].get("api_key_env", ""))' "$live_config" 2>/dev/null)
     fi
 
-    if [ -z "$live_key" ] || [ -z "$(printenv "$live_key" 2>/dev/null)" ]; then
+    if ! command -v python3 >/dev/null 2>&1; then
+        printf 'SMOKE SKIP live: python3 is not available to read the live config.\n'
+    elif [ -z "$live_key" ]; then
+        printf 'SMOKE SKIP live: the live config does not name an API key variable.\n'
+    elif [ -z "$(printenv "$live_key" 2>/dev/null)" ]; then
         printf 'SMOKE SKIP live: the API key variable is not set.\n'
     else
         live_root=$(mktemp -d)

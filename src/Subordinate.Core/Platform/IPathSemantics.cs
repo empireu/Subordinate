@@ -16,6 +16,12 @@ public interface IPathSemantics
 
     bool SupportsShellWorkingDirectory(ShellKind shell, string directory);
 
+    bool RejectsRawPath(string raw);
+
+    bool HasParentTraversalThroughLink(string raw, string? baseDirectory);
+
+    bool RejectsUnknownWorkingDirectory { get; }
+
     ResolvedPath Resolve(string value, string? baseDirectory);
 
     string? Canonicalize(string absolutePath);

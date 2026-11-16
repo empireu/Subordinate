@@ -59,7 +59,7 @@ public sealed class ShellCommandExecutor(ShellInfo shell, IReadOnlyCollection<st
 
     private static readonly string[] SecretMarkers = ["KEY", "TOKEN", "SECRET", "PASSWORD", "PASSWD", "CREDENTIAL", "COOKIE", "PRIVATE", "_AUTH", "AUTH_"];
 
-    private static readonly string[] BashStartupVariables = ["BASH_ENV", "ENV", "SHELLOPTS", "BASHOPTS", "CDPATH", "GLOBIGNORE", "POSIXLY_CORRECT", "BASH_COMPAT"];
+    private static readonly string[] BashStartupVariables = ["BASH_ENV", "ENV", "SHELLOPTS", "BASHOPTS", "CDPATH", "OLDPWD", "GLOBIGNORE", "POSIXLY_CORRECT", "BASH_COMPAT"];
 
     public ShellKind Shell => shell.Kind;
 

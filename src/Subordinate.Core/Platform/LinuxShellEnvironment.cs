@@ -98,7 +98,7 @@ public sealed class LinuxShellEnvironment : IShellEnvironment
                 continue;
             }
 
-            return new ShellInfo(ShellKind.Bash, candidate, version);
+            return new ShellInfo(ShellKind.Bash, Path.GetFullPath(candidate), version);
         }
 
         var detail = rejected.Count > 0 ? " Rejected: " + string.Join("; ", rejected) + "." : string.Empty;
@@ -154,7 +154,7 @@ public sealed class LinuxShellEnvironment : IShellEnvironment
                 continue;
             }
 
-            return new ShellInfo(ShellKind.PowerShell7, candidate, version!);
+            return new ShellInfo(ShellKind.PowerShell7, Path.GetFullPath(candidate), version!);
         }
 
         var detail = rejected.Count > 0 ? " Rejected: " + string.Join("; ", rejected) + "." : string.Empty;

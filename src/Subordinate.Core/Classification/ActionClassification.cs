@@ -84,12 +84,12 @@ public sealed class ActionClassification
 public sealed class ClassificationScope
 {
     /// <summary>
-    ///     The absolute Windows workdir of the session.
+    ///     The absolute workdir of the session.
     /// </summary>
     public required string Workdir { get; init; }
 
     /// <summary>
-    ///     The absolute Windows directory the command starts in.
+    ///     The absolute directory the command starts in.
     /// </summary>
     public required string WorkingDirectory { get; init; }
 

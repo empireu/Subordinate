@@ -62,6 +62,18 @@ public sealed partial class WindowsPathSemantics : IPathSemantics
         return shell != ShellKind.Bash || ToBashPath(directory) != null;
     }
 
+    public bool RejectsRawPath(string raw)
+    {
+        return false;
+    }
+
+    public bool HasParentTraversalThroughLink(string raw, string? baseDirectory)
+    {
+        return false;
+    }
+
+    public bool RejectsUnknownWorkingDirectory => false;
+
     public ResolvedPath Resolve(string value, string? baseDirectory)
     {
         var trimmed = value.Trim();

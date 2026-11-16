@@ -10,11 +10,10 @@ using Subordinate.Core.Json;
 using Subordinate.Core.Output;
 using Subordinate.Core.Policy;
 using Subordinate.Core.Running;
+using Subordinate.Core.Platform;
 using Subordinate.Core.Sessions;
 using Subordinate.Core.Shells;
 using Subordinate.Core.Tools;
-
-using Subordinate.Core.Platform;
 
 namespace Subordinate.Cli;
 

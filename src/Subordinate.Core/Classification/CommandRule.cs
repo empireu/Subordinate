@@ -111,6 +111,11 @@ public sealed class RuleContext
     /// </summary>
     public required IReadOnlyList<string> Words { get; init; }
 
+    /// <summary>
+    ///     The raw operands after the command word, excluding redirects.
+    /// </summary>
+    public required IReadOnlyList<string> RawOperands { get; init; }
+
     public required IReadOnlyList<string> RawElements { get; init; }
 
     public required IReadOnlyList<ArgumentView> Arguments { get; init; }

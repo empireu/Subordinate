@@ -267,6 +267,71 @@ public class SessionLifecycleRegressionTests
         Assert.Equal(PendingStatuses.Closed, Assert.Single(after.Pending).Status);
     }
 
+    [Fact]
+    public async Task StopReportsStoppedInsteadOfFailed()
+    {
+        using var harness = new SessionHarness();
+        var provider = new BlockingProvider(
+            SessionHarness.ShellCalls(("call_1", "git status")),
+            SessionHarness.Text(ChatRole.Assistant, "Done."));
+        using var stop = new CancellationTokenSource();
+
+        var run = Task.Run(async () => await harness.RunAsync(provider, cancellationToken: stop.Token));
+        await provider.SecondRequestStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        stop.Cancel();
+        var (outcome, _) = await run.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(SessionStates.Stopped, outcome.State);
+    }
+
+    [Fact]
+    public async Task StopWithAProviderCancellationErrorReportsStopped()
+    {
+        using var harness = new SessionHarness();
+        var provider = new CancellationErrorProvider(
+            SessionHarness.ShellCalls(("call_1", "git status")),
+            SessionHarness.Text(ChatRole.Assistant, "Done."));
+        using var stop = new CancellationTokenSource();
+
+        var run = Task.Run(async () => await harness.RunAsync(provider, cancellationToken: stop.Token));
+        await provider.SecondRequestStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        stop.Cancel();
+        var (outcome, _) = await run.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(SessionStates.Stopped, outcome.State);
+    }
+
+    [Fact]
+    public async Task StopWithAThrownProviderErrorReportsStopped()
+    {
+        using var harness = new SessionHarness();
+        var provider = new ThrowingCancellationProvider(
+            SessionHarness.ShellCalls(("call_1", "git status")),
+            SessionHarness.Text(ChatRole.Assistant, "Done."));
+        using var stop = new CancellationTokenSource();
+
+        var run = Task.Run(async () => await harness.RunAsync(provider, cancellationToken: stop.Token));
+        await provider.SecondRequestStarted.Task.WaitAsync(TimeSpan.FromSeconds(10));
+        stop.Cancel();
+        var (outcome, _) = await run.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.Equal(SessionStates.Stopped, outcome.State);
+    }
+
+    [Fact]
+    public async Task StopDuringStartupReportsStopped()
+    {
+        using var harness = new SessionHarness();
+        harness.Update(record => record.Shell.Kind = "unknown-shell");
+        var provider = new ScriptedProvider(SessionHarness.Text(ChatRole.Assistant, "Done."));
+        using var stop = new CancellationTokenSource();
+        stop.Cancel();
+
+        var (outcome, _) = await harness.RunAsync(provider, cancellationToken: stop.Token);
+
+        Assert.Equal(SessionStates.Stopped, outcome.State);
+    }
+
     private static JsonElement ReadJson(string path)
     {
         using var document = JsonDocument.Parse(File.ReadAllText(path));

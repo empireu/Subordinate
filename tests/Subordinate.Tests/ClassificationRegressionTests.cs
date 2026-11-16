@@ -41,8 +41,16 @@ public class ClassificationRegressionTests
         AssertCapabilities("echo -n hi", Capability.Read);
     }
 
-    [Fact]
-    public void RelativeCdInsideTheWorkdirIsTracked()
+    [WindowsFact]
+    public void RelativeCdInsideTheWorkdirIsTrackedOnWindows()
+    {
+        var classification = AssertCapabilities("cd FrostedHeart && ls src", Capability.Read);
+
+        Assert.DoesNotContain(classification.AllReasons, reason => reason.Contains("working directory", StringComparison.OrdinalIgnoreCase) && reason.Contains("cannot be determined", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [LinuxFact]
+    public void RelativeCdInsideTheWorkdirIsTrackedOnLinux()
     {
         var classification = AssertCapabilities("cd FrostedHeart && ls src", Capability.Read);
 
@@ -171,6 +179,14 @@ public class ClassificationRegressionTests
         var classification = Classify("PATH=/tmp grep foo src");
 
         Assert.Contains(Capability.Unbounded, classification.AllCapabilities);
+    }
+
+    [LinuxFact]
+    public void BackslashScriptPathHasNoGrantKey()
+    {
+        var classification = Classify("bash 'a\\b/../../evil.sh'");
+
+        Assert.Null(Assert.Single(classification.Units).Key);
     }
 
     private static ActionClassification AssertCapabilities(string command, params Capability[] expected)

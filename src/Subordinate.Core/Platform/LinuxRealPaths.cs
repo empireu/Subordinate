@@ -33,7 +33,7 @@ internal static partial class LinuxRealPaths
 
             var slash = current.LastIndexOf('/');
 
-            if (slash < 0)
+            if (slash < 0 || IsSymbolicLink(current))
             {
                 return null;
             }
@@ -43,8 +43,61 @@ internal static partial class LinuxRealPaths
         }
     }
 
+    public static bool HasParentTraversalThroughLink(string path)
+    {
+        if (!path.StartsWith('/'))
+        {
+            return false;
+        }
+
+        var current = "/";
+
+        foreach (var segment in path.Split('/'))
+        {
+            if (segment.Length == 0 || segment == ".")
+            {
+                continue;
+            }
+
+            if (segment == "..")
+            {
+                if (IsSymbolicLink(current))
+                {
+                    return true;
+                }
+
+                current = Parent(current);
+                continue;
+            }
+
+            current = current == "/" ? "/" + segment : current + "/" + segment;
+        }
+
+        return false;
+    }
+
+    public static bool IsSymbolicLink(string path)
+    {
+        var buffer = (byte)0;
+        return ReadLink(path, ref buffer, 1) > 0;
+    }
+
+    private static string Parent(string path)
+    {
+        if (path == "/")
+        {
+            return "/";
+        }
+
+        var slash = path.LastIndexOf('/');
+        return slash <= 0 ? "/" : path[..slash];
+    }
+
     [LibraryImport("libc", EntryPoint = "realpath", StringMarshalling = StringMarshalling.Utf8)]
     private static partial IntPtr ResolveRealPath(string path, IntPtr resolvedPath);
+
+    [LibraryImport("libc", EntryPoint = "readlink", StringMarshalling = StringMarshalling.Utf8)]
+    private static partial nint ReadLink(string path, ref byte buffer, nint bufferSize);
 
     [LibraryImport("libc", EntryPoint = "free")]
     private static partial void Free(IntPtr pointer);

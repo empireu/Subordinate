@@ -4,11 +4,10 @@ using KnowledgeSystem.Agents.Orchestration;
 using KnowledgeSystem.Agents.Orchestration.Tools;
 using KnowledgeSystem.Agents.Tools;
 using Subordinate.Core.Classification;
+using Subordinate.Core.Platform;
 using Subordinate.Core.Policy;
 using Subordinate.Core.Running;
 using Subordinate.Core.Shells;
-
-using Subordinate.Core.Platform;
 
 namespace Subordinate.Core.Tools;
 

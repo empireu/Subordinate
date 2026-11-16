@@ -5,9 +5,9 @@ This guide is for Linux testers. It covers the prerequisites, building and deplo
 ## Prerequisites
 
 - Linux on x64 or arm64. Other architectures are not tested.
-- bash 5.2 or 5.3. Check with `bash --version`. Other versions fail closed.
+- bash 5.2 or 5.3. Check with `bash --version`. Other versions fail closed. Ubuntu 22.04, Debian 11 and RHEL 9 ship bash 5.1, which fails closed.
 - The .NET 11 SDK version 11.0.100-preview.3.26207.106. Install that SDK and put `dotnet` on PATH.
-- Optional: PowerShell 7.6.4 or later, below 7.7, for the `pwsh` shell. Set `SUBORDINATE_TEST_PWSH` to its path if it is not on PATH.
+- Optional: PowerShell 7.6.4 or later, below 7.7, for the `pwsh` shell. The pwsh test runs only when `SUBORDINATE_TEST_PWSH` is set. `scripts/test-linux.sh` sets it automatically when pwsh is at `~/.local/pwsh/pwsh`; otherwise set it to the path of your pwsh.
 
 ## Build and deploy
 
@@ -72,7 +72,7 @@ cd ~/subordinate-test
 subordinate start --name first --policy readonly --prompt "List the files in this directory and report what you see." --wait
 ```
 
-The command prints one JSON line and a summary. A finished session exits 0. When the session is waiting for approval, read the id from `pending.json` and run:
+The command prints one JSON line and a summary. A finished session exits 0. When the session is waiting for approval, the JSON has `pending_file` and `pending_count`. The pending items are in `pending.json` in the run directory shown as `run_dir`, for example `sessions/<session>/runs/<run_id>/pending.json`. Read the id and run:
 
 ```
 subordinate resume --name first --approve <id> --wait

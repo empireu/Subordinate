@@ -74,20 +74,37 @@ public class LinuxShellTests
     public async Task ExecutorRemovesSecretVariables()
     {
         var info = ShellLocator.Locate(ShellKind.Bash, new ShellPathsEntry());
-        var previous = Environment.GetEnvironmentVariable("SUBORDINATE_SMOKE_TOKEN");
+        var previousSecret = Environment.GetEnvironmentVariable("SUBORDINATE_SMOKE_TOKEN");
+        var previousVisible = Environment.GetEnvironmentVariable("SUBORDINATE_SMOKE_VISIBLE");
         Environment.SetEnvironmentVariable("SUBORDINATE_SMOKE_TOKEN", "secret");
+        Environment.SetEnvironmentVariable("SUBORDINATE_SMOKE_VISIBLE", "visible");
 
         try
         {
             var executor = new ShellCommandExecutor(info, []);
-            var result = await executor.ExecuteAsync(CreateRequest("printenv SUBORDINATE_SMOKE_TOKEN", Path.GetTempPath(), TimeSpan.FromSeconds(30)), CancellationToken.None);
+            var hidden = await executor.ExecuteAsync(CreateRequest("printenv SUBORDINATE_SMOKE_TOKEN", Path.GetTempPath(), TimeSpan.FromSeconds(30)), CancellationToken.None);
+            var visible = await executor.ExecuteAsync(CreateRequest("printenv SUBORDINATE_SMOKE_VISIBLE", Path.GetTempPath(), TimeSpan.FromSeconds(30)), CancellationToken.None);
 
-            Assert.Equal(string.Empty, result.StandardOutput!.Text.Trim());
+            Assert.Equal(1, hidden.ExitCode);
+            Assert.Equal(string.Empty, hidden.StandardOutput!.Text.Trim());
+            Assert.Equal(0, visible.ExitCode);
+            Assert.Equal("visible", visible.StandardOutput!.Text.Trim());
         }
         finally
         {
-            Environment.SetEnvironmentVariable("SUBORDINATE_SMOKE_TOKEN", previous);
+            Environment.SetEnvironmentVariable("SUBORDINATE_SMOKE_TOKEN", previousSecret);
+            Environment.SetEnvironmentVariable("SUBORDINATE_SMOKE_VISIBLE", previousVisible);
         }
+    }
+
+    [LinuxFact]
+    public void ConfiguredRelativeBashPathIsMadeAbsolute()
+    {
+        var relative = Path.GetRelativePath(Directory.GetCurrentDirectory(), "/bin/bash");
+        var info = ShellLocator.Locate(ShellKind.Bash, new ShellPathsEntry { Bash = relative });
+
+        Assert.True(Path.IsPathRooted(info.ExecutablePath));
+        Assert.Equal("/bin/bash", info.ExecutablePath);
     }
 
     [LinuxFact]

@@ -1,7 +1,6 @@
 using System.Text;
 using Subordinate.Cli;
 using Subordinate.Core;
-
 using Subordinate.Core.Platform;
 
 namespace Subordinate;

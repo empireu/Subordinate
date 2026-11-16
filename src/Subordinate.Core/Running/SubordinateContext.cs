@@ -2,9 +2,8 @@ using KnowledgeSystem.Agents.Context;
 using KnowledgeSystem.Agents.Orchestration;
 using KnowledgeSystem.Ai.Providers.Abstractions;
 using Subordinate.Core.Classification;
-using Subordinate.Core.Shells;
-
 using Subordinate.Core.Platform;
+using Subordinate.Core.Shells;
 
 namespace Subordinate.Core.Running;
 

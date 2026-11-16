@@ -1,7 +1,6 @@
 using ShellSyntaxTree;
-using Subordinate.Core.Policy;
-
 using Subordinate.Core.Platform;
+using Subordinate.Core.Policy;
 
 namespace Subordinate.Core.Classification;
 
@@ -50,12 +49,20 @@ public static class ShellClassifier
         {
             var accountedRegionArguments = FindAccountedRegionArguments(parsed);
             string? workingDirectory = scope.WorkingDirectory;
+            var workingDirectoryTrusted = true;
 
             foreach (var occurrence in parsed.Commands)
             {
-                var fallback = occurrence.Clause.Operator == CompoundOperator.AndIf ? workingDirectory : null;
-                units.Add(ClassifyOccurrence(occurrence, shell, scope, accountedRegionArguments, depth, fallback));
-                workingDirectory = UpdateWorkingDirectory(occurrence, workingDirectory, scope);
+                var fallback = occurrence.Clause.Operator == CompoundOperator.AndIf && workingDirectoryTrusted ? workingDirectory : null;
+                units.Add(ClassifyOccurrence(occurrence, shell, scope, accountedRegionArguments, depth, fallback, workingDirectoryTrusted));
+                var updated = UpdateWorkingDirectory(occurrence, workingDirectory, scope);
+
+                if (updated == null)
+                {
+                    workingDirectoryTrusted = false;
+                }
+
+                workingDirectory = updated;
             }
         }
 
@@ -119,7 +126,7 @@ public static class ShellClassifier
         }
     }
 
-    private static ActionUnit ClassifyOccurrence(CommandOccurrence occurrence, ShellKind shell, ClassificationScope scope, IReadOnlyList<ClauseElement> accountedRegionArguments, int depth, string? fallbackWorkingDirectory)
+    private static ActionUnit ClassifyOccurrence(CommandOccurrence occurrence, ShellKind shell, ClassificationScope scope, IReadOnlyList<ClauseElement> accountedRegionArguments, int depth, string? fallbackWorkingDirectory, bool workingDirectoryTrusted)
     {
         var capabilities = new HashSet<Capability> { Capability.Read };
         var reasons = new List<string>();
@@ -128,6 +135,24 @@ public static class ShellClassifier
         var words = occurrence.CommandWords is ShellCommandWords.Known known
             ? known.Words.Select(word => word.ToLowerInvariant()).ToArray()
             : [];
+        var verb = occurrence.Clause.Verb;
+        var verbIndex = -1;
+        var elements = occurrence.Clause.Elements;
+
+        for (var elementIndex = 0; elementIndex < elements.Count; elementIndex++)
+        {
+            if (elements[elementIndex].Role == ClauseElementRole.Verb)
+            {
+                verbIndex = elementIndex;
+                break;
+            }
+        }
+
+        var rawOperands = elements
+            .Skip(verbIndex + 1)
+            .Where(element => element.Role != ClauseElementRole.Redirect)
+            .Select(element => element.Raw)
+            .ToList();
         var suspectWords = words.Skip(1).Any(word => word.StartsWith('-') || word.Contains('='));
 
         void Unbounded(string reason)
@@ -167,7 +192,6 @@ public static class ShellClassifier
             Unbounded($"`{display}` sets variables that can change how programs behave");
         }
 
-        var verb = occurrence.Clause.Verb;
         if (verb.IsDynamic || verb.Tokens.Count == 0)
         {
             Unbounded($"the program run by `{display}` cannot be determined statically");
@@ -182,8 +206,13 @@ public static class ShellClassifier
             };
         }
 
-        var baseDirectory = ResolveWorkingDirectory(occurrence.WorkingDirectory, scope) ?? fallbackWorkingDirectory;
+        var baseDirectory = workingDirectoryTrusted
+            ? ResolveWorkingDirectory(occurrence.WorkingDirectory, scope) ?? fallbackWorkingDirectory
+            : null;
         var programWord = verb.CanonicalVerb ?? verb.Tokens[0];
+        var verbElement = verbIndex >= 0 ? elements[verbIndex] : null;
+        var rawProgramWord = verbElement?.Raw ?? programWord;
+        var programValue = verbElement?.Value ?? programWord;
         var program = CommandDatabase.NormalizeProgram(programWord);
         var hasSubcommands = CommandDatabase.TryGet(program, out var baseRule) && baseRule.Subcommands != null;
 
@@ -193,7 +222,7 @@ public static class ShellClassifier
             words = [];
         }
 
-        var rule = ResolveRule(programWord, program, words, baseDirectory, scope, out var ruleReason);
+        var rule = ResolveRule(programWord, rawProgramWord, programValue, program, words, baseDirectory, scope, out var ruleReason);
 
         var arguments = new List<ArgumentView>();
         var skipped = new HashSet<int>();
@@ -221,6 +250,7 @@ public static class ShellClassifier
         {
             Program = program,
             Words = words,
+            RawOperands = rawOperands,
             RawElements = occurrence.Clause.Elements.Select(element => element.Raw).ToList(),
             Arguments = arguments,
             Role = occurrence.ImmediateRole,
@@ -375,24 +405,28 @@ public static class ShellClassifier
                 paths.Add(new PathAccess(isWrite, candidate));
             }
 
-            if (candidates.Count == 0)
+            foreach (var match in SensitivePaths.FindMatches(analyzed.Argument.Raw))
             {
-                foreach (var match in SensitivePaths.FindMatches(analyzed.Argument.Raw))
-                {
-                    capabilities.Add(Capability.Sensitive);
-                    var reason = $"the command references a credential store ({match})";
+                capabilities.Add(Capability.Sensitive);
+                var reason = $"the command references a credential store ({match})";
 
-                    if (!reasons.Contains(reason))
-                    {
-                        reasons.Add(reason);
-                    }
+                if (!reasons.Contains(reason))
+                {
+                    reasons.Add(reason);
                 }
             }
         }
 
-        foreach (var redirect in occurrence.Redirects)
+        var rawRedirectTargets = elements
+            .Where(element => element.Role == ClauseElementRole.Redirect)
+            .Select(RawRedirectTarget)
+            .ToList();
+        var rawTargetsAreAligned = rawRedirectTargets.Count == occurrence.Redirects.Count;
+
+        for (var redirectIndex = 0; redirectIndex < occurrence.Redirects.Count; redirectIndex++)
         {
-            ClassifyRedirect(redirect, display, baseDirectory, paths, Unbounded);
+            var rawTarget = rawTargetsAreAligned ? rawRedirectTargets[redirectIndex] : null;
+            ClassifyRedirect(occurrence.Redirects[redirectIndex], display, baseDirectory, paths, Unbounded, rawTarget, !rawTargetsAreAligned);
         }
 
         if (rule == null || rule.Operands != OperandAccess.Data)
@@ -423,10 +457,21 @@ public static class ShellClassifier
 
     private static string? UpdateWorkingDirectory(CommandOccurrence occurrence, string? current, ClassificationScope scope)
     {
-        if (occurrence.WorkingDirectoryEffect is ShellWorkingDirectoryEffect.ChangesOnSuccess changed && changed.Target is ShellValueDomain.Exact exact)
+        if (occurrence.WorkingDirectoryEffect is ShellWorkingDirectoryEffect.ChangesOnSuccess changed)
         {
-            var resolved = ShellPaths.Resolve(exact.Value, current ?? scope.WorkingDirectory);
-            return resolved.Kind == ResolvedPathKind.Local ? resolved.Path : null;
+            if (changed.Target is ShellValueDomain.Exact exact)
+            {
+                return ResolveChangedWorkingDirectory(occurrence, exact.Value, current, scope);
+            }
+
+            if (!PlatformServices.Current.Paths.RejectsUnknownWorkingDirectory)
+            {
+                return current;
+            }
+
+            return TryGetPlainLiteralCdTarget(occurrence, out var literal)
+                ? ResolveChangedWorkingDirectory(occurrence, literal, current, scope)
+                : null;
         }
 
         if (occurrence.WorkingDirectoryEffect is ShellWorkingDirectoryEffect.Unknown)
@@ -435,6 +480,56 @@ public static class ShellClassifier
         }
 
         return current;
+    }
+
+    private static string? ResolveChangedWorkingDirectory(CommandOccurrence occurrence, string target, string? current, ClassificationScope scope)
+    {
+        if (occurrence.Arguments.Any(argument =>
+            PlatformServices.Current.Paths.RejectsRawPath(argument.Argument.Raw)
+            || PlatformServices.Current.Paths.HasParentTraversalThroughLink(argument.Element.Value, current ?? scope.WorkingDirectory)))
+        {
+            return null;
+        }
+
+        var resolved = ShellPaths.Resolve(target, current ?? scope.WorkingDirectory);
+        return resolved.Kind == ResolvedPathKind.Local ? resolved.Path : null;
+    }
+
+    private static bool TryGetPlainLiteralCdTarget(CommandOccurrence occurrence, out string target)
+    {
+        target = string.Empty;
+        AnalyzedArgument? candidate = null;
+
+        foreach (var argument in occurrence.Arguments)
+        {
+            if (argument.Argument.IsCwdAttribution || argument.Argument.IsFlag)
+            {
+                continue;
+            }
+
+            if (candidate != null)
+            {
+                return false;
+            }
+
+            candidate = argument;
+        }
+
+        if (candidate == null || candidate.Argument.Kind != ArgKind.Literal)
+        {
+            return false;
+        }
+
+        var raw = candidate.Argument.Raw;
+        var value = candidate.Element.Value;
+
+        if (raw == "-" || raw.StartsWith('~') || value.StartsWith('~'))
+        {
+            return false;
+        }
+
+        target = value;
+        return target.Length > 0;
     }
 
     private static string? BuildKey(string programWord, string program, IReadOnlyList<string> words, bool hasSubcommands, bool suspectWords, CommandRule? rule, RuleContext context, CommandOccurrence occurrence, string? baseDirectory, ClassificationScope scope)
@@ -536,6 +631,12 @@ public static class ShellClassifier
 
     private static string? BuildScriptKey(string program, AnalyzedArgument script, string? baseDirectory, ClassificationScope scope)
     {
+        if (PlatformServices.Current.Paths.RejectsRawPath(script.Argument.Raw)
+            || PlatformServices.Current.Paths.HasParentTraversalThroughLink(script.Element.Value, baseDirectory))
+        {
+            return null;
+        }
+
         if (script.Value is not ShellValueDomain.Exact exact)
         {
             return null;
@@ -686,9 +787,15 @@ public static class ShellClassifier
         return true;
     }
 
-    private static CommandRule? ResolveRule(string programWord, string program, IReadOnlyList<string> words, string? baseDirectory, ClassificationScope scope, out string? reason)
+    private static CommandRule? ResolveRule(string programWord, string rawProgramWord, string programValue, string program, IReadOnlyList<string> words, string? baseDirectory, ClassificationScope scope, out string? reason)
     {
         reason = null;
+
+        if (PlatformServices.Current.Paths.RejectsRawPath(rawProgramWord)
+            || PlatformServices.Current.Paths.HasParentTraversalThroughLink(programValue, baseDirectory))
+        {
+            return null;
+        }
 
         if (!CommandDatabase.TryGet(program, out var rule))
         {
@@ -749,7 +856,37 @@ public static class ShellClassifier
         };
     }
 
-    private static void ClassifyRedirect(RedirectAnalysis redirect, string display, string? baseDirectory, List<PathAccess> paths, Action<string> unbounded)
+    private static string RawRedirectTarget(ClauseElement element)
+    {
+        var raw = element.Raw.TrimStart();
+        var operatorIndex = raw.IndexOfAny(['<', '>']);
+
+        if (operatorIndex < 0)
+        {
+            return Unquote(raw);
+        }
+
+        var index = operatorIndex;
+
+        while (index < raw.Length && raw[index] is '<' or '>' or '&')
+        {
+            index++;
+        }
+
+        return Unquote(raw[index..].TrimStart());
+    }
+
+    private static string Unquote(string value)
+    {
+        if (value.Length >= 2 && ((value[0] == '\'' && value[^1] == '\'') || (value[0] == '"' && value[^1] == '"')))
+        {
+            return value[1..^1];
+        }
+
+        return value;
+    }
+
+    private static void ClassifyRedirect(RedirectAnalysis redirect, string display, string? baseDirectory, List<PathAccess> paths, Action<string> unbounded, string? rawTarget, bool failClosed)
     {
         if (!redirect.IsComplete || redirect.Source is not (RedirectSource.Default or RedirectSource.Descriptor or RedirectSource.PowerShellAllStreams))
         {
@@ -767,6 +904,21 @@ public static class ShellClassifier
                 {
                     unbounded($"a redirect of `{display}` uses an unrecognized mode");
                     return;
+                }
+
+                if (failClosed)
+                {
+                    paths.Add(new PathAccess(isWrite, new ResolvedPath(ResolvedPathKind.Unknown, null, file.Authored?.Target ?? "?")));
+                    break;
+                }
+
+                var target = rawTarget ?? redirect.Authored?.Target;
+
+                if (target != null && (PlatformServices.Current.Paths.RejectsRawPath(target)
+                    || PlatformServices.Current.Paths.HasParentTraversalThroughLink(target, baseDirectory)))
+                {
+                    paths.Add(new PathAccess(isWrite, new ResolvedPath(ResolvedPathKind.Unknown, null, target)));
+                    break;
                 }
 
                 switch (file.Target)
@@ -832,7 +984,8 @@ public static class ShellClassifier
         candidates = [];
         var argument = analyzed.Argument;
 
-        if (OperatingSystem.IsLinux() && argument.Raw.Contains('\\'))
+        if (PlatformServices.Current.Paths.RejectsRawPath(argument.Raw)
+            || PlatformServices.Current.Paths.HasParentTraversalThroughLink(analyzed.Element.Value, baseDirectory))
         {
             candidates.Add(new ResolvedPath(ResolvedPathKind.Unknown, null, argument.Raw));
             return true;

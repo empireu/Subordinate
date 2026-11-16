@@ -10,10 +10,9 @@ using KnowledgeSystem.Events.Implementation;
 using Subordinate.Core.Classification;
 using Subordinate.Core.Gate;
 using Subordinate.Core.Output;
+using Subordinate.Core.Platform;
 using Subordinate.Core.Sessions;
 using Subordinate.Core.Shells;
-
-using Subordinate.Core.Platform;
 
 namespace Subordinate.Core.Running;
 

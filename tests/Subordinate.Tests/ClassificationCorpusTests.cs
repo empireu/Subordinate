@@ -102,8 +102,23 @@ public class ClassificationCorpusTests
         { "ps aux", "readonly", "allow", "read", "" },
         { "ps -ef", "readonly", "allow", "read", "" },
         { "ps -p 1 -o comm=", "readonly", "allow", "read", "" },
+        { "ps -C sleep", "readonly", "allow", "read", "" },
+        { "ps -U alice", "readonly", "allow", "read", "" },
+        { "ps -o etime", "readonly", "allow", "read", "" },
+        { "ps -p 1 -o user,pid", "readonly", "allow", "read", "" },
+        { "ps aux > e.txt", "edit", "allow", "write", "" },
         { "ps eww", "readonly", "defer", "sensitive", "human" },
-        { "ps auxe", "readonly", "defer", "sensitive", "human" }
+        { "ps auxe", "readonly", "defer", "sensitive", "human" },
+        { "ps -eaux", "readonly", "defer", "sensitive", "human" },
+        { "ps -auxe", "readonly", "defer", "sensitive", "human" },
+        { "ps -xue", "readonly", "defer", "sensitive", "human" },
+        { "ps -exu", "readonly", "defer", "sensitive", "human" },
+        { "ps -e -x", "readonly", "defer", "sensitive", "human" },
+        { "ps -e -u", "readonly", "defer", "sensitive", "human" },
+        { "ps -e -u tester", "readonly", "allow", "read", "" },
+        { "ps -eu tester", "readonly", "allow", "read", "" },
+        { "ps x -e", "readonly", "allow", "read", "" },
+        { "ps e -x", "readonly", "defer", "sensitive", "human" }
     };
 
     public static TheoryData<string, string, string, string, string> WindowsBashCorpus => new()
@@ -144,7 +159,18 @@ public class ClassificationCorpusTests
         { "cat 'src\\a.cs'", "readonly", "defer", "read-outside", "" },
         { "rm -rf /work/repo/build", "edit", "allow", "write", "" },
         { "rm -rf /work/repo2", "edit", "defer", "write-outside", "human" },
-        { "cd /work/repo/src && ls", "readonly", "allow", "read", "" }
+        { "cd /work/repo/src && ls", "readonly", "allow", "read", "" },
+        { "cd src && cat a.cs", "readonly", "allow", "read", "" },
+        { "cd - && rm -rf x", "edit", "defer", "unbounded", "human" },
+        { "cd ~ && cat x", "readonly", "defer", "read-outside", "" },
+        { "cat /proc/*/environ", "readonly", "defer", "sensitive", "human" },
+        { "cat /proc/1234/task/5678/environ", "readonly", "defer", "sensitive", "human" },
+        { "cat /etc/shadow-", "readonly", "defer", "sensitive", "human" },
+        { "echo x > 'a\\b/../../.bashrc'", "edit", "defer", "write-outside", "human" },
+        { "cat > 'a\\b/../../x' <<EOF\nbody\nEOF", "edit", "defer", "write-outside", "human" },
+        { "ls 2>&1 > 'a\\b/../../x'", "edit", "defer", "write-outside", "human" },
+        { "cd 'a\\b/../..' && cat x", "readonly", "defer", "unbounded", "" },
+        { "'a\\b/../../evil' --flag", "edit", "defer", "unclassified", "" }
     };
 
     public static TheoryData<string, string, string, string, string> LinuxPwshCorpus => new()

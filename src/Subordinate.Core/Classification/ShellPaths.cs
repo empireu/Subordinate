@@ -29,7 +29,7 @@ public readonly record struct ResolvedPath(ResolvedPathKind Kind, string? Path, 
 }
 
 /// <summary>
-///     Normalizes paths written for Git Bash or PowerShell into absolute paths.
+///     Normalizes authored paths into absolute paths.
 /// </summary>
 public static partial class ShellPaths
 {

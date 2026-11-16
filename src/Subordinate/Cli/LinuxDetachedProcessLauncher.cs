@@ -9,10 +9,7 @@ internal sealed partial class LinuxDetachedProcessLauncher : IDetachedProcessLau
 {
     public static readonly LinuxDetachedProcessLauncher Instance = new();
 
-    private static readonly PosixSignalRegistration SighupRegistration = PosixSignalRegistration.Create(PosixSignal.SIGHUP, context =>
-    {
-        context.Cancel = true;
-    });
+    private static PosixSignalRegistration? _sighupRegistration;
 
     private LinuxDetachedProcessLauncher()
     {
@@ -46,6 +43,10 @@ internal sealed partial class LinuxDetachedProcessLauncher : IDetachedProcessLau
     public void DetachCurrentProcess()
     {
         CreateNewSession();
+        _sighupRegistration ??= PosixSignalRegistration.Create(PosixSignal.SIGHUP, context =>
+        {
+            context.Cancel = true;
+        });
     }
 
     [LibraryImport("libc", EntryPoint = "setsid", SetLastError = true)]

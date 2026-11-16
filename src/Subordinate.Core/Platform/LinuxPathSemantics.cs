@@ -45,6 +45,30 @@ public sealed partial class LinuxPathSemantics : IPathSemantics
         return directory.StartsWith('/');
     }
 
+    public bool RejectsRawPath(string raw)
+    {
+        return raw.Contains('\\');
+    }
+
+    public bool HasParentTraversalThroughLink(string raw, string? baseDirectory)
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return false;
+        }
+
+        var trimmed = raw.Trim();
+
+        if (trimmed.StartsWith('/'))
+        {
+            return LinuxRealPaths.HasParentTraversalThroughLink(trimmed);
+        }
+
+        return baseDirectory != null && LinuxRealPaths.HasParentTraversalThroughLink(baseDirectory + "/" + trimmed);
+    }
+
+    public bool RejectsUnknownWorkingDirectory => true;
+
     public ResolvedPath Resolve(string value, string? baseDirectory)
     {
         var trimmed = value.Trim();
@@ -76,6 +100,11 @@ public sealed partial class LinuxPathSemantics : IPathSemantics
 
         if (trimmed.StartsWith('/'))
         {
+            if (OperatingSystem.IsLinux() && LinuxRealPaths.HasParentTraversalThroughLink(trimmed))
+            {
+                return new ResolvedPath(ResolvedPathKind.Unknown, null, value);
+            }
+
             var canonical = Canonicalize(trimmed);
 
             return canonical == null
@@ -93,7 +122,14 @@ public sealed partial class LinuxPathSemantics : IPathSemantics
             return new ResolvedPath(ResolvedPathKind.Unknown, null, value);
         }
 
-        var combined = Canonicalize(baseDirectory + "/" + trimmed);
+        var combinedPath = baseDirectory + "/" + trimmed;
+
+        if (OperatingSystem.IsLinux() && LinuxRealPaths.HasParentTraversalThroughLink(combinedPath))
+        {
+            return new ResolvedPath(ResolvedPathKind.Unknown, null, value);
+        }
+
+        var combined = Canonicalize(combinedPath);
 
         return combined == null
             ? new ResolvedPath(ResolvedPathKind.Unknown, null, value)

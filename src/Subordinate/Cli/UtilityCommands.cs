@@ -5,11 +5,10 @@ using Subordinate.Core.Classification;
 using Subordinate.Core.Configuration;
 using Subordinate.Core.Json;
 using Subordinate.Core.Policy;
+using Subordinate.Core.Platform;
 using Subordinate.Core.Running;
 using Subordinate.Core.Sessions;
 using Subordinate.Core.Shells;
-
-using Subordinate.Core.Platform;
 
 namespace Subordinate.Cli;
 
