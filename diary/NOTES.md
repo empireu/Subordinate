@@ -39,6 +39,10 @@
 - Fix: ShellClassifier.TryGetPathCandidates now checks the raw argument on Linux and returns an Unknown path when it contains a backslash. Windows behavior is unchanged. This restores the fail-closed rule from section 5.2.
 - Final Linux result: build succeeded, 229 passed, 0 failed, 7 skipped, 236 total. WSL stopped after the run.
 
+## Phase 4
+- Linux shell discovery implemented with the execute-bit check in ShellProbe.FindOnPath. Windows result: build 0 warnings, 251 passed, 12 skipped, 263 total.
+- Final Linux result: build succeeded, 237 passed, 0 failed, 7 skipped, 244 total. WSL stopped.
+
 ## Decisions
 - None yet.
 

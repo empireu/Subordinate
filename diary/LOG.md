@@ -22,3 +22,6 @@
 - Phase 3: first Linux run had 2 failures, the backslash corpus rows. The parser normalized the backslash before the path code saw it. Added a raw-argument check in ShellClassifier.TryGetPathCandidates for Linux.
 - Phase 3: Windows re-verification passed after the fix. Build 0 warnings, 251 passed, 4 skipped, 255 total.
 - Phase 3: Linux verification passed after the fix. Build succeeded, 229 passed, 0 failed, 7 skipped, 236 total. WSL stopped.
+- Phase 4: implemented LinuxShellEnvironment.Locate and ProbeVersion, added the execute-bit check to ShellProbe.FindOnPath, and added the Linux shell tests.
+- Phase 4: Windows verification passed. Build 0 warnings, 251 passed, 12 skipped, 263 total.
+- Phase 4: Linux verification passed. Build succeeded, 237 passed, 0 failed, 7 skipped, 244 total. WSL stopped.

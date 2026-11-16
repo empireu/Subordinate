@@ -1,10 +1,10 @@
 # TODO
 
-Current: Phase 3, step 6.
+Current: Phase 4, step 5.
 
 ## Next actions
-1. Commit the Phase 3 work with the subject Adds Linux path handling.
-2. Start Phase 4: implement Linux shell discovery.
+1. Commit the Phase 4 work with the subject Adds Linux shell discovery.
+2. Start Phase 5: record the Windows project evaluation, then add the Linux deploy target.
 
 ## Questions for the owner
 - None.

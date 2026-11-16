@@ -1,4 +1,4 @@
-Current: Phase 3, step 6.
+Current: Phase 4, step 5.
 
 # Plan
 
@@ -38,13 +38,13 @@ Current: Phase 3, step 6.
 - [x] Split the existing tests and add the Linux corpora
 - [x] Add the Linux system prompt test
 - [x] Verify on Windows and Linux
-- [ ] Commit Adds Linux path handling
+- [x] Commit Adds Linux path handling
 
 ## Phase 4: Linux shells
-- [ ] Implement LinuxShellEnvironment.Locate and ProbeVersion
-- [ ] Make Doctor use SupportedShells
-- [ ] Add the Linux shell tests
-- [ ] Verify on Windows and Linux
+- [x] Implement LinuxShellEnvironment.Locate and ProbeVersion
+- [x] Make Doctor use SupportedShells
+- [x] Add the Linux shell tests
+- [x] Verify on Windows and Linux
 - [ ] Commit Adds Linux shell discovery
 
 ## Phase 5: Linux build and deploy

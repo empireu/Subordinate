@@ -69,7 +69,7 @@ internal static partial class ShellProbe
             {
                 var candidate = Path.Combine(directory.Trim(), fileName);
 
-                if (File.Exists(candidate))
+                if (File.Exists(candidate) && IsExecutable(candidate))
                 {
                     return candidate;
                 }
@@ -80,5 +80,16 @@ internal static partial class ShellProbe
         }
 
         return null;
+    }
+
+    private static bool IsExecutable(string path)
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return true;
+        }
+
+        var mode = File.GetUnixFileMode(path);
+        return (mode & (UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute)) != 0;
     }
 }
