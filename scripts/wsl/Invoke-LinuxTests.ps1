@@ -45,7 +45,7 @@ Write-Output "Log: $LogFile"
 try {
     $syncArguments = @(
         "-d", $DistroName, "-u", $UserName, "--exec", "rsync", "-a", "--delete",
-        "--exclude=bin/", "--exclude=obj/", "--exclude=.git/", "--exclude=.idea/", "--exclude=.vs/", "--exclude=diary/",
+        "--exclude=bin/", "--exclude=obj/", "--exclude=.git/", "--exclude=.idea/", "--exclude=.vs/",
         "$wslRepository/", "$linuxRepository/"
     )
     & wsl.exe @syncArguments *>> $LogFile
