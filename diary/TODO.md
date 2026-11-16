@@ -1,10 +1,10 @@
 # TODO
 
-Current: Phase 4, step 5.
+Current: Phase 5, step 4.
 
 ## Next actions
-1. Commit the Phase 4 work with the subject Adds Linux shell discovery.
-2. Start Phase 5: record the Windows project evaluation, then add the Linux deploy target.
+1. Commit the Phase 5 work with the subject Adds Linux publish and deploy target.
+2. Start Phase 6: add LinuxDetachedProcessLauncher and the detach smoke checks.
 
 ## Questions for the owner
 - None.

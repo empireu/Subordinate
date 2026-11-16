@@ -1,4 +1,4 @@
-Current: Phase 4, step 5.
+Current: Phase 5, step 4.
 
 # Plan
 
@@ -45,12 +45,12 @@ Current: Phase 4, step 5.
 - [x] Make Doctor use SupportedShells
 - [x] Add the Linux shell tests
 - [x] Verify on Windows and Linux
-- [ ] Commit Adds Linux shell discovery
+- [x] Commit Adds Linux shell discovery
 
 ## Phase 5: Linux build and deploy
-- [ ] Record the Windows project evaluation in NOTES.md
-- [ ] Add the Linux property group and DeployToSubordinateHomeLinux target
-- [ ] Verify on Windows and Linux
+- [x] Record the Windows project evaluation in NOTES.md
+- [x] Add the Linux property group and DeployToSubordinateHomeLinux target
+- [x] Verify on Windows and Linux
 - [ ] Commit Adds Linux publish and deploy target
 
 ## Phase 6: Detached worker on Linux

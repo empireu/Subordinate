@@ -19,6 +19,15 @@
         <SubordinatePublishDirectory>$(MSBuildProjectDirectory)\obj\deploy\$(Configuration)\</SubordinatePublishDirectory>
     </PropertyGroup>
 
+    <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('Linux'))">
+        <SubordinateLinuxRuntime Condition="'$([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)' == 'Arm64'">linux-arm64</SubordinateLinuxRuntime>
+        <SubordinateLinuxRuntime Condition="'$(SubordinateLinuxRuntime)' == ''">linux-x64</SubordinateLinuxRuntime>
+        <RuntimeIdentifiers>$(SubordinateLinuxRuntime)</RuntimeIdentifiers>
+        <SubordinateHomeDirectory Condition="'$(SUBORDINATE_HOME)' == ''">$(HOME)/.subordinate</SubordinateHomeDirectory>
+        <SubordinateDeployDirectory>$(SubordinateHomeDirectory)/bin/</SubordinateDeployDirectory>
+        <SubordinatePublishDirectory>$(MSBuildProjectDirectory)/obj/deploy/$(Configuration)/</SubordinatePublishDirectory>
+    </PropertyGroup>
+
     <ItemGroup>
         <InternalsVisibleTo Include="Subordinate.Tests" />
     </ItemGroup>
@@ -33,6 +42,16 @@
             <SubordinatePublishedFiles Include="$(SubordinatePublishDirectory)**\*" />
         </ItemGroup>
         <Copy SourceFiles="@(SubordinatePublishedFiles)" DestinationFiles="@(SubordinatePublishedFiles->'$(SubordinateDeployDirectory)%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" Retries="3" RetryDelayMilliseconds="500" ContinueOnError="WarnAndContinue" />
+        <Message Importance="high" Text="Deployed subordinate to $(SubordinateDeployDirectory)" />
+    </Target>
+
+    <Target Name="DeployToSubordinateHomeLinux" AfterTargets="Build" Condition="'$(SubordinateDeploying)' != 'true' And $([MSBuild]::IsOSPlatform('Linux'))">
+        <MSBuild Projects="$(MSBuildProjectFullPath)" Targets="Publish" Properties="Configuration=$(Configuration);RuntimeIdentifier=$(SubordinateLinuxRuntime);SelfContained=true;PublishDir=$(SubordinatePublishDirectory);SubordinateDeploying=true" />
+        <ItemGroup>
+            <SubordinatePublishedFilesLinux Include="$(SubordinatePublishDirectory)**/*" />
+        </ItemGroup>
+        <Copy SourceFiles="@(SubordinatePublishedFilesLinux)" DestinationFiles="@(SubordinatePublishedFilesLinux->'$(SubordinateDeployDirectory)%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" Retries="3" RetryDelayMilliseconds="500" ContinueOnError="WarnAndContinue" />
+        <Exec Command="chmod +x &quot;$(SubordinateDeployDirectory)subordinate&quot;" />
         <Message Importance="high" Text="Deployed subordinate to $(SubordinateDeployDirectory)" />
     </Target>
 

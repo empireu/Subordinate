@@ -25,3 +25,6 @@
 - Phase 4: implemented LinuxShellEnvironment.Locate and ProbeVersion, added the execute-bit check to ShellProbe.FindOnPath, and added the Linux shell tests.
 - Phase 4: Windows verification passed. Build 0 warnings, 251 passed, 12 skipped, 263 total.
 - Phase 4: Linux verification passed. Build succeeded, 237 passed, 0 failed, 7 skipped, 244 total. WSL stopped.
+- Phase 5: added the Linux property group and DeployToSubordinateHomeLinux target. The Windows evaluation is unchanged.
+- Phase 5: Windows verification passed. Build 0 warnings, 251 passed, 12 skipped, all 6 smoke checks passed, deploy guard passed.
+- Phase 5: Linux verification passed. Build succeeded, 237 passed, 0 failed, 7 skipped, 244 total. Deployed to /home/tester/.subordinate/bin/ and the deployed help returned ok:true. WSL stopped.

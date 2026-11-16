@@ -43,6 +43,12 @@
 - Linux shell discovery implemented with the execute-bit check in ShellProbe.FindOnPath. Windows result: build 0 warnings, 251 passed, 12 skipped, 263 total.
 - Final Linux result: build succeeded, 237 passed, 0 failed, 7 skipped, 244 total. WSL stopped.
 
+## Phase 5
+- Before the project change, Windows evaluation: RuntimeIdentifiers=win-x64, SubordinateDeployDirectory=C:\Users\alioth\.subordinate\bin\.
+- After the change, the Windows evaluation is unchanged: RuntimeIdentifiers=win-x64, SubordinateDeployDirectory=C:\Users\alioth\.subordinate\bin\.
+- Windows verification: build 0 warnings, 251 passed, 12 skipped, all 6 smoke checks passed, deploy guard passed.
+- Linux verification: build succeeded, 237 passed, 0 failed, 7 skipped, 244 total. Deployed to /home/tester/.subordinate/bin/. The deployed binary is executable and help prints ok:true. WSL stopped.
+
 ## Decisions
 - None yet.
 
