@@ -102,4 +102,21 @@ public class PathAndPolicyTests
         Assert.NotEmpty(SensitivePaths.FindMatches("cat .netrc"));
         Assert.NotEmpty(SensitivePaths.FindMatches("cat secrets/.pgpass"));
     }
+
+    [Fact]
+    public void SensitivePathDetectionIncludesProcessEnvironments()
+    {
+        Assert.NotEmpty(SensitivePaths.FindMatches("cat /proc/1234/environ"));
+        Assert.NotEmpty(SensitivePaths.FindMatches("cat /proc/self/environ"));
+        Assert.Empty(SensitivePaths.FindMatches("cat /proc/cpuinfo"));
+    }
+
+    [Fact]
+    public void SensitivePathDetectionIncludesLinuxCredentialStores()
+    {
+        Assert.NotEmpty(SensitivePaths.FindMatches("cat ~/.password-store/x.gpg"));
+        Assert.NotEmpty(SensitivePaths.FindMatches("ls ~/.local/share/keyrings"));
+        Assert.NotEmpty(SensitivePaths.FindMatches("cat /etc/shadow"));
+        Assert.NotEmpty(SensitivePaths.FindMatches("cat /etc/gshadow"));
+    }
 }

@@ -38,3 +38,11 @@
 - Phase 6: Windows re-verification after the second stop fix passed. Build 0 warnings, 251 passed, 12 skipped, 6 smoke passes, deploy guard passed.
 - Phase 6: Linux re-verification after the second stop fix passed. Build succeeded, 237 passed, 0 failed, 7 skipped, 244 total. SMOKE PASS detach. Live skipped. WSL stopped.
 - Phase 6: optional live run skipped by owner decision. The mandatory live run is Phase 8.
+- Phase 6: committed 9a46ea7 Adds detached worker launch on Linux.
+- Phase 7: added the process environment, password store, keyring and system password file sensitive patterns with Fact tests.
+- Phase 7: added the ps rule with five platform-neutral corpus rows. The refine reads the raw clause elements after the program word because the parser reports ps aux as two command words.
+- Phase 7: added LinuxRealPaths and the real-path check in LinuxPathSemantics.IsInside, with five LinuxFact symlink tests.
+- Phase 7: added AllowUnsafeBlocks to Subordinate.Core for the LibraryImport calls.
+- Phase 7: Windows verification passed. Build 0 warnings, 258 passed, 17 skipped, 275 total, 6 smoke passes, deploy guard passed.
+- Phase 7: the first Linux run failed during the build with a file lock on Subordinate.Core.deps.json. WSL was stopped and the retry passed.
+- Phase 7: Linux verification passed. Build succeeded, 249 passed, 0 failed, 7 skipped, 256 total. All 7 smoke checks passed and live was skipped. WSL stopped.

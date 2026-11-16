@@ -40,6 +40,10 @@ public static class SensitivePaths
         ("Vault or Terraform token", Create(Boundary + @"\.vault-token" + End + @"|" + Boundary + @"\.terraformrc" + End + @"|credentials\.tfrc\.json")),
         (".NET user secrets", Create(@"microsoft/usersecrets")),
         ("Windows credential store", Create(@"appdata/(?:roaming|local)/microsoft/(?:credentials|protect)")),
+        ("process environment", Create(@"/proc/[^/]+/environ" + End)),
+        ("password store", Create(Boundary + @"\.password-store" + End)),
+        ("keyring", Create(@"\.local/share/keyrings")),
+        ("system password file", Create(@"/etc/(?:g)?shadow" + End)),
         ("PowerShell environment provider", Create(@"(?:^|[\s'""=(,])env:"))
     ];
 

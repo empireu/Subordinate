@@ -1,4 +1,4 @@
-Current: Phase 6, step 5.
+Current: Phase 7, step 5.
 
 # Plan
 
@@ -58,13 +58,13 @@ Current: Phase 6, step 5.
 - [x] Add smoke checks 7 and 8
 - [x] Verify on Windows and Linux
 - [ ] Optional live run
-- [ ] Commit Adds detached worker launch on Linux
+- [x] Commit Adds detached worker launch on Linux
 
 ## Phase 7: Linux hardening
-- [ ] Add the sensitive patterns and tests
-- [ ] Add the ps rule and corpus rows
-- [ ] Add LinuxRealPaths and the symlink check with tests
-- [ ] Verify on Windows and Linux
+- [x] Add the sensitive patterns and tests
+- [x] Add the ps rule and corpus rows
+- [x] Add LinuxRealPaths and the symlink check with tests
+- [x] Verify on Windows and Linux
 - [ ] Commit Hardens classification for Linux
 
 ## Phase 8: Documentation and final verification

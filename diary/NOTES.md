@@ -65,6 +65,17 @@
 - Windows re-verification after the second stop fix: build 0 warnings, 251 passed, 12 skipped, 6 smoke passes, deploy guard passed.
 - Final Linux result after the second fix: build succeeded, 237 passed, 0 failed, 7 skipped, 244 total. SMOKE PASS detach. Live skipped without --live-config. WSL stopped.
 - The optional Phase 6 live run was skipped. The mandatory live run is Phase 8.
+- Phase 6 commit: 9a46ea7 Adds detached worker launch on Linux.
+
+## Phase 7
+- Sensitive patterns added: process environment (/proc/<pid>/environ), password store, keyring and system password file (/etc/shadow and /etc/gshadow).
+- The ps refine reads the raw clause elements after the program word. The parser reports ps aux and ps eww as two command words, so they are absent from the argument list.
+- LinuxRealPaths resolves the longest existing prefix with libc realpath and appends the remaining segments. IsInside on Linux requires the real path to be inside the real root.
+- Subordinate.Core.csproj now sets AllowUnsafeBlocks for the LibraryImport source generator.
+- The first Linux run failed during the build with a file lock on Subordinate.Core.deps.json. WSL was stopped, the retry passed and the failure did not reproduce.
+- Windows verification: build 0 warnings, 258 passed, 17 skipped, 275 total, 6 smoke passes, deploy guard passed.
+- Linux verification: build succeeded, 249 passed, 0 failed, 7 skipped, 256 total. All 7 smoke checks passed and live was skipped. WSL stopped.
+- Limit for the README: links created by an earlier part of the same command are not visible at classification time. The classifier is a deterministic floor, not a sandbox.
 
 ## Commits
 - Phase 0: cc03455 Adds Linux support plan, work diary and a build script that skips deployment

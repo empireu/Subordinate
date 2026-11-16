@@ -98,7 +98,12 @@ public class ClassificationCorpusTests
         { "tee out.txt", "edit", "allow", "write", "" },
         { "sort -o /tmp/sorted in.txt", "edit", "defer", "write-outside", "human" },
         { "env", "readonly", "allow", "read", "" },
-        { "env FOO=1 make", "build", "defer", "unclassified", "" }
+        { "env FOO=1 make", "build", "defer", "unclassified", "" },
+        { "ps aux", "readonly", "allow", "read", "" },
+        { "ps -ef", "readonly", "allow", "read", "" },
+        { "ps -p 1 -o comm=", "readonly", "allow", "read", "" },
+        { "ps eww", "readonly", "defer", "sensitive", "human" },
+        { "ps auxe", "readonly", "defer", "sensitive", "human" }
     };
 
     public static TheoryData<string, string, string, string, string> WindowsBashCorpus => new()

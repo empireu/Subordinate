@@ -104,8 +104,9 @@ public static class CommandDatabase
         Add(ReadOnly(RefineSearch), "grep", "egrep", "fgrep", "rg", "ag", "ack", "fd", "findstr");
         Add(ReadOnly(), "cd", "pushd", "popd", "cat", "head", "tail", "less", "more", "wc", "tree", "ls", "dir",
             "stat", "file", "du", "df", "realpath", "readlink", "cut", "nl", "column", "paste", "join", "comm", "diff", "cmp", "md5sum", "sha1sum", "sha256sum",
-            "sha512sum", "cksum", "base64", "xxd", "od", "hexdump", "strings", "jq", "yq", "tac", "rev", "fold", "fmt", "expand", "unexpand", "ps", "tasklist",
+            "sha512sum", "cksum", "base64", "xxd", "od", "hexdump", "strings", "jq", "yq", "tac", "rev", "fold", "fmt", "expand", "unexpand", "tasklist",
             "printenv", "fc", "systeminfo", "ver");
+        Add(ReadOnly(RefinePs), "ps");
         Add(ReadOnly(RefineTr), "tr");
         Add(ReadOnly(RefineFind), "find");
         Add(ReadOnly(RefineSed), "sed");
@@ -702,6 +703,36 @@ public static class CommandDatabase
         if (pattern != null)
         {
             context.MarkData(pattern);
+        }
+    }
+
+    private static void RefinePs(RuleContext context)
+    {
+        foreach (var text in context.RawElements.Skip(1))
+        {
+            if (!text.StartsWith('-'))
+            {
+                if (text.Contains('e'))
+                {
+                    context.Add(Capability.Sensitive, "ps can print the environment of other processes");
+                    return;
+                }
+
+                continue;
+            }
+
+            if (text.StartsWith("--", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var flags = text[1..];
+
+            if (flags.Contains('e') && (flags.Contains('u') || flags.Contains('x')))
+            {
+                context.Add(Capability.Sensitive, "ps can print the environment of other processes");
+                return;
+            }
         }
     }
 

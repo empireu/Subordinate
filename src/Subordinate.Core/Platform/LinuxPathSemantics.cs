@@ -134,7 +134,31 @@ public sealed partial class LinuxPathSemantics : IPathSemantics
 
     public bool IsInside(string path, string root)
     {
-        return IsInsideLexically(path, root);
+        if (!IsInsideLexically(path, root))
+        {
+            return false;
+        }
+
+        if (!OperatingSystem.IsLinux())
+        {
+            return true;
+        }
+
+        var realRoot = LinuxRealPaths.Resolve(root);
+
+        if (realRoot == null)
+        {
+            return false;
+        }
+
+        var realPath = LinuxRealPaths.Resolve(path);
+
+        if (realPath == null)
+        {
+            return false;
+        }
+
+        return IsInsideLexically(realPath, realRoot);
     }
 
     public static bool IsInsideLexically(string path, string root)
