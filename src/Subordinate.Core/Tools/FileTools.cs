@@ -7,6 +7,8 @@ using Subordinate.Core.Classification;
 using Subordinate.Core.Policy;
 using Subordinate.Core.Running;
 
+using Subordinate.Core.Platform;
+
 namespace Subordinate.Core.Tools;
 
 internal static class FileToolPaths
@@ -51,7 +53,7 @@ internal static class FileToolPaths
                 new ActionUnit
                 {
                     Display = $"{tool} {path.Display}",
-                    Key = path.Kind == ResolvedPathKind.Local ? path.Path!.ToLowerInvariant() : null,
+                    Key = path.Kind == ResolvedPathKind.Local ? PlatformServices.Current.Paths.GrantKey(path.Path!) : null,
                     Capabilities = capabilities,
                     Reasons = reasons,
                     Paths = [new PathAccess(isWrite, path)]

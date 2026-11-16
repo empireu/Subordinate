@@ -1,4 +1,4 @@
-Current: Phase 1, step 8.
+Current: Phase 2, step 7.
 
 # Plan
 
@@ -21,15 +21,15 @@ Current: Phase 1, step 8.
 - [x] Run Install-TestDistro.ps1 and record the versions
 - [x] Run the Linux baseline tests and record the failures
 - [x] Confirm WSL stopped
-- [ ] Commit Adds scripts for testing on Linux through WSL
+- [x] Commit Adds scripts for testing on Linux through WSL
 
 ## Phase 2: Platform abstraction with the Windows backend
-- [ ] Add PlatformFacts.cs and the SessionIdentityIsStable Windows test
-- [ ] Create Platform/ with the interfaces, PlatformServices, UnsupportedPlatform, WindowsPlatform, WindowsPathSemantics, WindowsShellEnvironment and ShellProbe
-- [ ] Turn ShellPaths and ShellLocator into facades and update the call sites
-- [ ] Add IDetachedProcessLauncher and WindowsDetachedProcessLauncher
-- [ ] Add the unsupported platform check to Program.Main and the empty-home check to ResolveHome
-- [ ] Verify on Windows
+- [x] Add PlatformFacts.cs and the SessionIdentityIsStable Windows test
+- [x] Create Platform/ with the interfaces, PlatformServices, UnsupportedPlatform, WindowsPlatform, WindowsPathSemantics, WindowsShellEnvironment and ShellProbe
+- [x] Turn ShellPaths and ShellLocator into facades and update the call sites
+- [x] Add IDetachedProcessLauncher and WindowsDetachedProcessLauncher
+- [x] Add the unsupported platform check to Program.Main and the empty-home check to ResolveHome
+- [x] Verify on Windows
 - [ ] Commit Adds platform abstraction with a Windows backend
 
 ## Phase 3: Linux paths

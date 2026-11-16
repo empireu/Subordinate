@@ -8,6 +8,8 @@ using Subordinate.Core.Policy;
 using Subordinate.Core.Running;
 using Subordinate.Core.Shells;
 
+using Subordinate.Core.Platform;
+
 namespace Subordinate.Core.Tools;
 
 /// <summary>
@@ -20,11 +22,7 @@ public sealed class ShellToolHandler(AgentTool tool, StringArgument commandArgum
 
     public static void Register(AgentToolRegistry<SubordinateContext> registry, ShellKind shell)
     {
-        var shellDescription = shell == ShellKind.Bash
-            ? "Git Bash on Windows. Use POSIX syntax; Windows drives are /c/..., /d/... and so on."
-            : shell == ShellKind.WindowsPowerShell
-                ? "Windows PowerShell 5.1. Use PowerShell syntax."
-                : "PowerShell 7.6. Use PowerShell syntax.";
+        var shellDescription = PlatformServices.Current.Shells.ToolDescription(shell);
 
         var shellTool = new ToolBuilder(ShellClassifier.ToolName)
             .WithDescription($"Runs a command in a fresh, non-interactive shell and returns its exit code, standard output and standard error. The shell is {shellDescription} Standard input is closed, so interactive programs fail. Prefer one simple command per call. Large output is truncated and the full output is saved to a file that read_file can open.")

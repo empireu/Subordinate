@@ -4,6 +4,8 @@ using KnowledgeSystem.Ai.Providers.Abstractions;
 using Subordinate.Core.Classification;
 using Subordinate.Core.Shells;
 
+using Subordinate.Core.Platform;
+
 namespace Subordinate.Core.Running;
 
 /// <summary>
@@ -29,7 +31,7 @@ public sealed class ToolEnvironment
 
     public required int DefaultShellTimeoutSeconds { get; init; }
 
-    public HashSet<string> FilesWritten { get; } = new(StringComparer.OrdinalIgnoreCase);
+    public HashSet<string> FilesWritten { get; } = new(PlatformServices.Current.Paths.Comparer);
 
     private int _outputCounter;
 

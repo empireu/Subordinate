@@ -101,7 +101,14 @@ public sealed class SubordinateConfig
             return Path.GetFullPath(overridden);
         }
 
-        return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".subordinate");
+        var userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+
+        if (string.IsNullOrEmpty(userProfile))
+        {
+            throw new SubordinateException(ErrorCode.ConfigError, "The home directory is unknown. Set SUBORDINATE_HOME.");
+        }
+
+        return Path.Combine(userProfile, ".subordinate");
     }
 
     public static SubordinateConfig Load(string home)

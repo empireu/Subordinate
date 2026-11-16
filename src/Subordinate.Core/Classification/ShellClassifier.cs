@@ -1,6 +1,8 @@
 using ShellSyntaxTree;
 using Subordinate.Core.Policy;
 
+using Subordinate.Core.Platform;
+
 namespace Subordinate.Core.Classification;
 
 /// <summary>
@@ -77,7 +79,7 @@ public static class ShellClassifier
             {
                 case ShellKind.Bash:
                 {
-                    if (ShellPaths.ToBashPath(scope.WorkingDirectory) == null)
+                    if (!PlatformServices.Current.Paths.SupportsShellWorkingDirectory(ShellKind.Bash, scope.WorkingDirectory))
                     {
                         error = "the working directory cannot be expressed as a Git Bash path";
                         return null;

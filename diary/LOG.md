@@ -14,3 +14,6 @@
 - Phase 1: Windows smoke baseline passed. Build 0 warnings, 223 tests passed, all 6 smoke checks passed, deploy guard passed.
 - Phase 1: Install-TestDistro.ps1 completed with exit 0. bash 5.2.21, dotnet 11.0.100-preview.3.26207.106, pwsh 7.6.10.
 - Phase 1: Linux baseline build succeeded. Tests: 223 total, 151 passed, 72 failed, 0 skipped. Failures are the expected Windows path and bash workdir cases. WSL stopped, docker-desktop remains the default.
+- Phase 2: added PlatformFacts.cs and SessionIdentityIsStable. The identity test passed at 224 tests.
+- Phase 2: moved the Windows path and shell code into Platform/ and ShellProbe, added the detached process launcher interface and selector, and updated the call sites.
+- Phase 2: Windows verification passed. Build 0 warnings, 224 tests passed, all 6 smoke checks passed, deploy guard passed.

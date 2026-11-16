@@ -2,6 +2,8 @@ using Subordinate.Core.Classification;
 using Subordinate.Core.Json;
 using Subordinate.Core.Policy;
 
+using Subordinate.Core.Platform;
+
 namespace Subordinate.Tests;
 
 public class PathAndPolicyTests
@@ -43,8 +45,8 @@ public class PathAndPolicyTests
     [Fact]
     public void ConvertsWindowsPathToGitBashForm()
     {
-        Assert.Equal("/d/repos/x", ShellPaths.ToBashPath(@"D:\repos\x\"));
-        Assert.Null(ShellPaths.ToBashPath(@"\\server\share"));
+        Assert.Equal("/d/repos/x", WindowsPathSemantics.ToBashPath(@"D:\repos\x\"));
+        Assert.Null(WindowsPathSemantics.ToBashPath(@"\\server\share"));
     }
 
     [Fact]

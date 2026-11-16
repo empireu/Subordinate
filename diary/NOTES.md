@@ -28,6 +28,11 @@
 - Hardcoded Windows workdir: ClassificationCorpusTests and ClassificationRegressionTests use D:\work\repo. On Linux Path.GetFullPath resolves it against the test output directory, so relative paths look outside the workdir. The Windows PowerShell corpus rows fail for the same reason.
 - No unexpected failures. WSL was stopped after the run and docker-desktop is still the default distro.
 
+## Phase 2
+- Platform abstraction added with the Windows backend. Windows build 0 warnings, 224 tests passed, 6 smoke checks passed, deploy guard passed.
+- Sequencing deviation: the ConvertsWindowsPathToGitBashForm test now calls WindowsPathSemantics.ToBashPath in Phase 2 so the build stays green. Phase 3 only adds the Windows gating.
+- The Windows prompt and tool description strings are unchanged.
+
 ## Decisions
 - None yet.
 

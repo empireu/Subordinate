@@ -13,6 +13,8 @@ using Subordinate.Core.Output;
 using Subordinate.Core.Sessions;
 using Subordinate.Core.Shells;
 
+using Subordinate.Core.Platform;
+
 namespace Subordinate.Core.Running;
 
 public sealed class RunLimits
@@ -600,7 +602,7 @@ public sealed class SessionRunner
         };
 
         RunArtifacts.AppendLog(_runDirectory, $"  -> {Shorten(FirstLine(text), 200)}");
-        _record.FilesWritten = _context!.Environment.FilesWritten.Order(StringComparer.OrdinalIgnoreCase).ToList();
+        _record.FilesWritten = _context!.Environment.FilesWritten.Order(PlatformServices.Current.Paths.Comparer).ToList();
         _store.Save(_paths, _record);
         return text;
     }
@@ -644,7 +646,7 @@ public sealed class SessionRunner
         }
 
         _record.Inflight = SnapshotInflight();
-        _record.FilesWritten = _context.Environment.FilesWritten.Order(StringComparer.OrdinalIgnoreCase).ToList();
+        _record.FilesWritten = _context.Environment.FilesWritten.Order(PlatformServices.Current.Paths.Comparer).ToList();
         UpdateCounters();
 
         foreach (var frame in _runner?.ActiveToolCalls ?? [])

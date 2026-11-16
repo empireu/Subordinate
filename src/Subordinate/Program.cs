@@ -2,6 +2,8 @@ using System.Text;
 using Subordinate.Cli;
 using Subordinate.Core;
 
+using Subordinate.Core.Platform;
+
 namespace Subordinate;
 
 internal static class Program
@@ -39,6 +41,11 @@ internal static class Program
 
         try
         {
+            if (!PlatformServices.IsSupported)
+            {
+                throw new SubordinateException(ErrorCode.InternalError, "Subordinate runs on Windows and Linux. This operating system is not supported.");
+            }
+
             if (!Commands.TryGetValue(commandName, out var definition))
             {
                 throw new SubordinateException(ErrorCode.InvalidArguments, $"Unknown command \"{commandName}\". Run 'subordinate help' for usage.");

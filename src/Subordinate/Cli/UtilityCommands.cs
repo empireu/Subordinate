@@ -9,6 +9,8 @@ using Subordinate.Core.Running;
 using Subordinate.Core.Sessions;
 using Subordinate.Core.Shells;
 
+using Subordinate.Core.Platform;
+
 namespace Subordinate.Cli;
 
 internal static class UtilityCommands
@@ -171,7 +173,7 @@ internal static class UtilityCommands
             }
         }
 
-        foreach (var shell in new[] { ShellKind.Bash, ShellKind.WindowsPowerShell, ShellKind.PowerShell7 })
+        foreach (var shell in PlatformServices.Current.Shells.SupportedShells)
         {
             try
             {

@@ -14,6 +14,8 @@ using Subordinate.Core.Sessions;
 using Subordinate.Core.Shells;
 using Subordinate.Core.Tools;
 
+using Subordinate.Core.Platform;
+
 namespace Subordinate.Cli;
 
 internal static class SessionCommands
@@ -58,7 +60,7 @@ internal static class SessionCommands
             throw new SubordinateException(ErrorCode.InvalidArguments, $"Unknown shell \"{shellToken}\". Use bash, powershell or pwsh.");
         }
 
-        if (shellKind == ShellKind.Bash && ShellPaths.ToBashPath(workdir) == null)
+        if (!PlatformServices.Current.Paths.SupportsShellWorkingDirectory(shellKind, workdir))
         {
             throw new SubordinateException(ErrorCode.WorkdirMissing, $"The workdir {workdir} is not on a drive letter, which the bash shell requires.");
         }
@@ -230,9 +232,9 @@ internal static class SessionCommands
         int processId;
         try
         {
-            processId = DetachedProcess.Start(executable, arguments, record.Workdir);
+            processId = DetachedProcess.Current.Start(executable, arguments, record.Workdir);
         }
-        catch (System.ComponentModel.Win32Exception ex)
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException or IOException)
         {
             MarkLaunchFailed(store, paths, runId, $"The background worker could not be started: {ex.Message}");
             throw new SubordinateException(ErrorCode.InternalError, $"The background worker could not be started: {ex.Message}");
@@ -276,6 +278,7 @@ internal static class SessionCommands
 
     public static async Task<int> WorkerAsync(CommandLine commandLine)
     {
+        DetachedProcess.Current.DetachCurrentProcess();
         var paths = new SessionPaths(commandLine.Required("session-dir"));
         var runId = commandLine.Required("run-id");
         var store = new SessionStore(Path.GetDirectoryName(Path.GetDirectoryName(paths.Directory)!)!);
@@ -481,7 +484,7 @@ internal static class SessionCommands
 
         var totals = new UsageTotals();
         var byModel = new Dictionary<string, UsageTotals>(StringComparer.OrdinalIgnoreCase);
-        var byWorkdir = new Dictionary<string, UsageTotals>(StringComparer.OrdinalIgnoreCase);
+        var byWorkdir = new Dictionary<string, UsageTotals>(PlatformServices.Current.Paths.Comparer);
         var modelDetails = new Dictionary<string, (string Provider, string ModelId)>(StringComparer.OrdinalIgnoreCase);
         var seenRuns = new HashSet<(string Session, string Workdir, string RunId)>();
         var count = 0;
@@ -537,7 +540,7 @@ internal static class SessionCommands
                     continue;
                 }
 
-                if (workdirFilter != null && !string.Equals(entry.Workdir, workdirFilter, StringComparison.OrdinalIgnoreCase))
+                if (workdirFilter != null && !string.Equals(entry.Workdir, workdirFilter, PlatformServices.Current.Paths.Comparison))
                 {
                     continue;
                 }
@@ -601,7 +604,7 @@ internal static class SessionCommands
                 writer.WriteEndArray();
                 writer.WriteStartArray("workdirs");
 
-                foreach (var (workdir, workdirTotals) in byWorkdir.OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase))
+                foreach (var (workdir, workdirTotals) in byWorkdir.OrderBy(pair => pair.Key, PlatformServices.Current.Paths.Comparer))
                 {
                     writer.WriteStartObject();
                     writer.WriteString("workdir", workdir);
@@ -751,7 +754,7 @@ internal static class SessionCommands
                 continue;
             }
 
-            if (filter != null && !string.Equals(record.Workdir, filter, StringComparison.OrdinalIgnoreCase))
+            if (filter != null && !string.Equals(record.Workdir, filter, PlatformServices.Current.Paths.Comparison))
             {
                 continue;
             }

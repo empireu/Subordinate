@@ -5,6 +5,8 @@ using Subordinate.Core.Classification;
 using Subordinate.Core.Policy;
 using Subordinate.Core.Tools;
 
+using Subordinate.Core.Platform;
+
 namespace Subordinate.Core.Running;
 
 /// <summary>
@@ -29,12 +31,7 @@ public sealed class SubordinateAgent : Agent<SubordinateContext>
 
     public static string BuildSystemPrompt(string basePrompt, string workdir, ShellKind shell, PolicySet policy, string? supervisorInstructions)
     {
-        var shellText = shell switch
-        {
-            ShellKind.Bash => "Git Bash (bash 5.2 on Windows). Write POSIX shell syntax. Windows drives appear as /c/, /d/ and so on.",
-            ShellKind.WindowsPowerShell => "Windows PowerShell 5.1. Write PowerShell syntax.",
-            _ => "PowerShell 7.6. Write PowerShell syntax."
-        };
+        var shellText = PlatformServices.Current.Shells.PromptDescription(shell);
 
         var grants = policy.CommandGrants.Count > 0
             ? " Additionally allowed commands: " + string.Join("; ", policy.CommandGrants) + "."

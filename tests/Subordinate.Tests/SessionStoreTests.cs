@@ -8,6 +8,15 @@ namespace Subordinate.Tests;
 
 public class SessionStoreTests
 {
+    [WindowsFact]
+    public void SessionIdentityIsStable()
+    {
+        var home = Path.Combine(Path.GetTempPath(), "subordinate-tests", Guid.NewGuid().ToString("N"));
+        var store = new SessionStore(home);
+
+        Assert.Equal("my-session-08c207a26afc", Path.GetFileName(store.PathsFor(@"D:\Work\Repo", "My Session").Directory));
+    }
+
     [Fact]
     public void DuplicateStartForTheSameWorkdirAndNameFails()
     {

@@ -6,6 +6,8 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using KnowledgeSystem.Ai.Providers.Abstractions;
 
+using Subordinate.Core.Platform;
+
 namespace Subordinate.Core.Sessions;
 
 /// <summary>
@@ -127,19 +129,7 @@ public sealed class SessionStore
 
     public static string NormalizeWorkdir(string workdir)
     {
-        var full = Path.GetFullPath(workdir);
-
-        if (full.Length > 3)
-        {
-            full = full.TrimEnd('\\', '/');
-        }
-
-        if (full.Length >= 2 && full[1] == ':')
-        {
-            full = char.ToUpperInvariant(full[0]) + full[1..];
-        }
-
-        return full;
+        return PlatformServices.Current.Paths.NormalizeDirectory(workdir);
     }
 
     public static void ValidateName(string name)
@@ -170,7 +160,7 @@ public sealed class SessionStore
 
     public SessionPaths PathsFor(string workdir, string name)
     {
-        var identity = NormalizeWorkdir(workdir).ToLowerInvariant() + "\n" + name.ToLowerInvariant();
+        var identity = PlatformServices.Current.Paths.IdentityKey(NormalizeWorkdir(workdir)) + "\n" + name.ToLowerInvariant();
         var hash = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(identity)))[..12];
         var slug = new StringBuilder();
 
