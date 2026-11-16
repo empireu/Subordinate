@@ -5,8 +5,6 @@ namespace Subordinate.Tests;
 
 public class ClassificationRegressionTests
 {
-    private const string Workdir = @"D:\work\repo";
-
     [Fact]
     public void ScriptArgumentsAreNotTreatedAsPaths()
     {
@@ -195,6 +193,6 @@ public class ClassificationRegressionTests
 
     private static ActionClassification Classify(string command)
     {
-        return ShellClassifier.Classify(command, ShellKind.Bash, new ClassificationScope { Workdir = Workdir, WorkingDirectory = Workdir });
+        return ShellClassifier.Classify(command, ShellKind.Bash, new ClassificationScope { Workdir = TestPaths.Workdir, WorkingDirectory = TestPaths.Workdir });
     }
 }

@@ -1,4 +1,4 @@
-Current: Phase 2, step 7.
+Current: Phase 3, step 6.
 
 # Plan
 
@@ -30,14 +30,14 @@ Current: Phase 2, step 7.
 - [x] Add IDetachedProcessLauncher and WindowsDetachedProcessLauncher
 - [x] Add the unsupported platform check to Program.Main and the empty-home check to ResolveHome
 - [x] Verify on Windows
-- [ ] Commit Adds platform abstraction with a Windows backend
+- [x] Commit Adds platform abstraction with a Windows backend
 
 ## Phase 3: Linux paths
-- [ ] Add LinuxPathSemantics, LinuxPlatform and the LinuxShellEnvironment stub
-- [ ] Add TestPaths and LinuxPathSemanticsTests
-- [ ] Split the existing tests and add the Linux corpora
-- [ ] Add the Linux system prompt test
-- [ ] Verify on Windows and Linux
+- [x] Add LinuxPathSemantics, LinuxPlatform and the LinuxShellEnvironment stub
+- [x] Add TestPaths and LinuxPathSemanticsTests
+- [x] Split the existing tests and add the Linux corpora
+- [x] Add the Linux system prompt test
+- [x] Verify on Windows and Linux
 - [ ] Commit Adds Linux path handling
 
 ## Phase 4: Linux shells

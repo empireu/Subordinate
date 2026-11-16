@@ -13,6 +13,11 @@ public static class PlatformServices
             return WindowsPlatform.Instance;
         }
 
+        if (OperatingSystem.IsLinux())
+        {
+            return LinuxPlatform.Instance;
+        }
+
         return UnsupportedPlatform.Instance;
     }
 }

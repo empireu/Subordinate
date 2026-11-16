@@ -37,7 +37,22 @@ public class SessionStoreTests
         var paths = harness.Store.PathsFor(otherWorkdir, "test");
 
         Assert.NotEqual(harness.Paths.Directory, paths.Directory);
+    }
+
+    [WindowsFact]
+    public void WorkdirIdentityIgnoresCaseOnWindows()
+    {
+        using var harness = new SessionHarness();
+
         Assert.Equal(harness.Paths.Directory, harness.Store.PathsFor(harness.Workdir.ToUpperInvariant(), "test").Directory);
+    }
+
+    [LinuxFact]
+    public void WorkdirIdentityIsCaseSensitiveOnLinux()
+    {
+        using var harness = new SessionHarness();
+
+        Assert.NotEqual(harness.Paths.Directory, harness.Store.PathsFor(harness.Workdir.ToUpperInvariant(), "test").Directory);
     }
 
     private static readonly string Accented = "caf" + (char)0x00E9;

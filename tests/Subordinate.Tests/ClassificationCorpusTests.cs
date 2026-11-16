@@ -5,8 +5,6 @@ namespace Subordinate.Tests;
 
 public class ClassificationCorpusTests
 {
-    private const string Workdir = @"D:\work\repo";
-
     public static TheoryData<string, string, string, string, string> BashCorpus => new()
     {
         { "git status", "readonly", "allow", "read", "" },
@@ -81,8 +79,6 @@ public class ClassificationCorpusTests
         { "cat ../other/x.txt", "readonly", "defer", "read-outside", "" },
         { "cat ../other/x.txt", "read,read-outside", "allow", "read-outside", "" },
         { "grep -r foo /etc", "readonly", "defer", "read-outside", "" },
-        { "cat D:/elsewhere/x.txt", "readonly", "defer", "read-outside", "" },
-        { "cat D:/work/repo/src/a.cs", "readonly", "allow", "read", "" },
         { "for f in a b; do echo $f; done", "edit", "allow", "read", "" },
         { "x=1; echo $x", "edit", "defer", "unbounded", "" },
         { "find . -name '*.cs' -exec rm {} \\;", "edit", "allow", "write", "" },
@@ -103,6 +99,12 @@ public class ClassificationCorpusTests
         { "sort -o /tmp/sorted in.txt", "edit", "defer", "write-outside", "human" },
         { "env", "readonly", "allow", "read", "" },
         { "env FOO=1 make", "build", "defer", "unclassified", "" }
+    };
+
+    public static TheoryData<string, string, string, string, string> WindowsBashCorpus => new()
+    {
+        { "cat D:/elsewhere/x.txt", "readonly", "defer", "read-outside", "" },
+        { "cat D:/work/repo/src/a.cs", "readonly", "allow", "read", "" }
     };
 
     public static TheoryData<string, string, string, string, string> PowerShellCorpus => new()
@@ -126,6 +128,31 @@ public class ClassificationCorpusTests
         { "gci | ForEach-Object { Remove-Item $_ }", "edit", "defer", "unbounded", "human" }
     };
 
+    public static TheoryData<string, string, string, string, string> LinuxBashCorpus => new()
+    {
+        { "cat /work/repo/src/a.cs", "readonly", "allow", "read", "" },
+        { "cat /work/elsewhere/x.txt", "readonly", "defer", "read-outside", "" },
+        { "cat /work/REPO/src/a.cs", "readonly", "defer", "read-outside", "" },
+        { "ls /c/Users", "readonly", "defer", "read-outside", "" },
+        { "echo hi > nul", "readonly", "defer", "write", "" },
+        { "echo hi > nul", "edit", "allow", "write", "" },
+        { "cat 'src\\a.cs'", "readonly", "defer", "read-outside", "" },
+        { "rm -rf /work/repo/build", "edit", "allow", "write", "" },
+        { "rm -rf /work/repo2", "edit", "defer", "write-outside", "human" },
+        { "cd /work/repo/src && ls", "readonly", "allow", "read", "" }
+    };
+
+    public static TheoryData<string, string, string, string, string> LinuxPwshCorpus => new()
+    {
+        { "Get-Content src/a.cs", "readonly", "allow", "read", "" },
+        { "Get-ChildItem src -Recurse", "readonly", "allow", "read", "" },
+        { "Set-Content out.txt 'x'", "edit", "allow", "write", "" },
+        { "Remove-Item -Path ../y -Recurse", "edit", "defer", "write-outside", "human" },
+        { "Get-Content src\\a.cs", "readonly", "defer", "read-outside", "" },
+        { "Get-Content env:SECRET", "readonly", "defer", "sensitive", "human" },
+        { "Invoke-WebRequest https://example.invalid", "edit", "defer", "network", "human" }
+    };
+
     [Theory]
     [MemberData(nameof(BashCorpus))]
     public void Bash(string command, string policy, string verdict, string capability, string human)
@@ -133,11 +160,32 @@ public class ClassificationCorpusTests
         AssertClassification(ShellKind.Bash, command, policy, verdict, capability, human);
     }
 
-    [Theory]
+    [WindowsTheory]
+    [MemberData(nameof(WindowsBashCorpus))]
+    public void WindowsBash(string command, string policy, string verdict, string capability, string human)
+    {
+        AssertClassification(ShellKind.Bash, command, policy, verdict, capability, human);
+    }
+
+    [WindowsTheory]
     [MemberData(nameof(PowerShellCorpus))]
     public void WindowsPowerShell(string command, string policy, string verdict, string capability, string human)
     {
         AssertClassification(ShellKind.WindowsPowerShell, command, policy, verdict, capability, human);
+    }
+
+    [LinuxTheory]
+    [MemberData(nameof(LinuxBashCorpus))]
+    public void LinuxBash(string command, string policy, string verdict, string capability, string human)
+    {
+        AssertClassification(ShellKind.Bash, command, policy, verdict, capability, human);
+    }
+
+    [LinuxTheory]
+    [MemberData(nameof(LinuxPwshCorpus))]
+    public void LinuxPwsh(string command, string policy, string verdict, string capability, string human)
+    {
+        AssertClassification(ShellKind.PowerShell7, command, policy, verdict, capability, human);
     }
 
     [Fact]
@@ -201,6 +249,6 @@ public class ClassificationCorpusTests
 
     private static ActionClassification Classify(ShellKind shell, string command)
     {
-        return ShellClassifier.Classify(command, shell, new ClassificationScope { Workdir = Workdir, WorkingDirectory = Workdir });
+        return ShellClassifier.Classify(command, shell, new ClassificationScope { Workdir = TestPaths.Workdir, WorkingDirectory = TestPaths.Workdir });
     }
 }

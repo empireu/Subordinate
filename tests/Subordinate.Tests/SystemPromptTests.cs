@@ -56,4 +56,15 @@ public class SystemPromptTests
             Directory.Delete(home, true);
         }
     }
+
+    [LinuxFact]
+    public void LinuxBashPromptMentionsLinux()
+    {
+        Assert.True(PolicySet.TryParse(["readonly"], out var policy, out _));
+
+        var prompt = SubordinateAgent.BuildSystemPrompt("BASE", "/work", ShellKind.Bash, policy!, null);
+
+        Assert.Contains("Linux", prompt, StringComparison.Ordinal);
+        Assert.DoesNotContain("Git Bash", prompt, StringComparison.Ordinal);
+    }
 }

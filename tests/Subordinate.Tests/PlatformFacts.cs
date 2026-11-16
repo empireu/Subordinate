@@ -45,3 +45,8 @@ public sealed class LinuxTheoryAttribute : TheoryAttribute
         }
     }
 }
+
+internal static class TestPaths
+{
+    public static string Workdir => OperatingSystem.IsWindows() ? @"D:\work\repo" : "/work/repo";
+}

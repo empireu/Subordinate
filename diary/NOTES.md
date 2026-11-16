@@ -33,6 +33,12 @@
 - Sequencing deviation: the ConvertsWindowsPathToGitBashForm test now calls WindowsPathSemantics.ToBashPath in Phase 2 so the build stays green. Phase 3 only adds the Windows gating.
 - The Windows prompt and tool description strings are unchanged.
 
+## Phase 3
+- Windows result after the Linux path work: build 0 warnings, 251 passed, 4 skipped, 255 total. The skipped tests are the Linux-only ones.
+- First Linux run: 2 failures, the two backslash corpus rows. The ShellSyntaxTree parser normalizes backslashes in path values before ShellPaths.Resolve sees them, so the paths looked inside the workdir.
+- Fix: ShellClassifier.TryGetPathCandidates now checks the raw argument on Linux and returns an Unknown path when it contains a backslash. Windows behavior is unchanged. This restores the fail-closed rule from section 5.2.
+- Final Linux result: build succeeded, 229 passed, 0 failed, 7 skipped, 236 total. WSL stopped after the run.
+
 ## Decisions
 - None yet.
 

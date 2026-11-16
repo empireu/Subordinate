@@ -8,7 +8,7 @@ namespace Subordinate.Tests;
 
 public class PathAndPolicyTests
 {
-    [Theory]
+    [WindowsTheory]
     [InlineData("/d/repos/x/src/a.cs", null, ResolvedPathKind.Local, @"D:\repos\x\src\a.cs")]
     [InlineData("D:/repos/y/c.txt", null, ResolvedPathKind.Local, @"D:\repos\y\c.txt")]
     [InlineData(@"D:\repos\y\c.txt", null, ResolvedPathKind.Local, @"D:\repos\y\c.txt")]
@@ -32,7 +32,7 @@ public class PathAndPolicyTests
         Assert.Equal(expected, resolved.Path);
     }
 
-    [Theory]
+    [WindowsTheory]
     [InlineData(@"D:\repos\x", @"D:\repos\x", true)]
     [InlineData(@"d:\Repos\X\src", @"D:\repos\x", true)]
     [InlineData(@"D:\repos\x2", @"D:\repos\x", false)]
@@ -42,7 +42,7 @@ public class PathAndPolicyTests
         Assert.Equal(inside, ShellPaths.IsInside(path, root));
     }
 
-    [Fact]
+    [WindowsFact]
     public void ConvertsWindowsPathToGitBashForm()
     {
         Assert.Equal("/d/repos/x", WindowsPathSemantics.ToBashPath(@"D:\repos\x\"));

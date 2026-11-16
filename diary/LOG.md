@@ -17,3 +17,8 @@
 - Phase 2: added PlatformFacts.cs and SessionIdentityIsStable. The identity test passed at 224 tests.
 - Phase 2: moved the Windows path and shell code into Platform/ and ShellProbe, added the detached process launcher interface and selector, and updated the call sites.
 - Phase 2: Windows verification passed. Build 0 warnings, 224 tests passed, all 6 smoke checks passed, deploy guard passed.
+- Phase 3: added LinuxPathSemantics, LinuxPlatform and the LinuxShellEnvironment stub, added TestPaths and LinuxPathSemanticsTests, gated the Windows path tests, split the workdir identity test, added the Linux corpora and the Linux prompt test.
+- Phase 3: Windows verification passed. Build 0 warnings, 251 passed, 4 skipped, 255 total.
+- Phase 3: first Linux run had 2 failures, the backslash corpus rows. The parser normalized the backslash before the path code saw it. Added a raw-argument check in ShellClassifier.TryGetPathCandidates for Linux.
+- Phase 3: Windows re-verification passed after the fix. Build 0 warnings, 251 passed, 4 skipped, 255 total.
+- Phase 3: Linux verification passed after the fix. Build succeeded, 229 passed, 0 failed, 7 skipped, 236 total. WSL stopped.

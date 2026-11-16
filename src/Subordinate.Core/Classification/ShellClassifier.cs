@@ -832,6 +832,12 @@ public static class ShellClassifier
         candidates = [];
         var argument = analyzed.Argument;
 
+        if (OperatingSystem.IsLinux() && argument.Raw.Contains('\\'))
+        {
+            candidates.Add(new ResolvedPath(ResolvedPathKind.Unknown, null, argument.Raw));
+            return true;
+        }
+
         switch (analyzed.AuthoredFileSystemValue)
         {
             case ShellValueDomain.Exact exactFile:
