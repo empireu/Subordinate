@@ -1,21 +1,17 @@
 # TODO
 
-Current: Phase 7, step 4 (verify on Windows and Linux).
+Current: Phase 8, step 5 (commit and report).
 
 ## State
-- Phase 7 code and tests are written.
-- Sensitive patterns added: process environment, password store, keyring, system password file.
-- The ps rule reads the raw clause elements after the program word because ps aux is parsed as two command words.
-- LinuxRealPaths added and LinuxPathSemantics.IsInside checks the real path on Linux.
-- Subordinate.Core.csproj has AllowUnsafeBlocks for LibraryImport.
-- Windows: build 0 warnings, 258 passed, 17 skipped, 275 total, 6 smoke passes, deploy guard passed.
-- Linux verification is next.
+- All phases are verified.
+- Windows: 258 passed, 17 skipped, 275 total, 0 warnings, 6 smoke passes, deploy guard passed.
+- Linux: 249 passed, 0 failed, 7 skipped, 256 total, all 8 smoke checks passed including live. WSL stopped and docker-desktop remains the default.
+- The working tree has the Phase 8 documentation, the smoke script fix and the diary update.
 
 ## Next actions
-1. Run pwsh -NoProfile -File scripts/wsl/Invoke-LinuxTests.ps1 -Smoke.
-2. Fix any Linux failures.
-3. Update NOTES and LOG with the results.
-4. Commit Phase 7 with the subject Hardens classification for Linux.
+1. Commit Phase 8 with the subject Documents Linux support.
+2. Confirm git status is clean.
+3. Report to the owner.
 
 ## Questions for the owner
 - None.

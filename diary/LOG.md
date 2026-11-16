@@ -46,3 +46,10 @@
 - Phase 7: Windows verification passed. Build 0 warnings, 258 passed, 17 skipped, 275 total, 6 smoke passes, deploy guard passed.
 - Phase 7: the first Linux run failed during the build with a file lock on Subordinate.Core.deps.json. WSL was stopped and the retry passed.
 - Phase 7: Linux verification passed. Build succeeded, 249 passed, 0 failed, 7 skipped, 256 total. All 7 smoke checks passed and live was skipped. WSL stopped.
+- Phase 7: committed 16c6dec Hardens classification for Linux.
+- Phase 8: updated README.md and wrote LINUX_TESTING.md.
+- Phase 8: Windows final verification passed. Build 0 warnings, 258 passed, 17 skipped, 275 total, 6 smoke passes, deploy guard passed.
+- Phase 8: starting the Linux final verification with -Live.
+- Phase 8: the first live run failed because pending.json is indented and the smoke script's id pattern expected compact JSON. The pattern now accepts whitespace around the colon.
+- Phase 8: final Linux verification passed. Build succeeded, 249 passed, 0 failed, 7 skipped, 256 total. All 8 smoke checks passed, including live. WSL stopped and the default distro is unchanged.
+- Phase 8: final Windows verification passed. Build 0 warnings, 258 passed, 17 skipped, 275 total, 6 smoke passes, deploy guard passed.

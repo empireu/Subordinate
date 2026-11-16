@@ -1,4 +1,4 @@
-Current: Phase 7, step 5.
+Current: Phase 8, step 5.
 
 # Plan
 
@@ -65,12 +65,12 @@ Current: Phase 7, step 5.
 - [x] Add the ps rule and corpus rows
 - [x] Add LinuxRealPaths and the symlink check with tests
 - [x] Verify on Windows and Linux
-- [ ] Commit Hardens classification for Linux
+- [x] Commit Hardens classification for Linux
 
 ## Phase 8: Documentation and final verification
-- [ ] Update README.md
-- [ ] Write LINUX_TESTING.md
-- [ ] Final verification on Windows and Linux with -Live
-- [ ] Update the diary
+- [x] Update README.md
+- [x] Write LINUX_TESTING.md
+- [x] Final verification on Windows and Linux with -Live
+- [x] Update the diary
 - [ ] Commit Documents Linux support
 - [ ] Report to the owner

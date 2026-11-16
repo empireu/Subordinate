@@ -1,6 +1,6 @@
 # Subordinate
 
-Subordinate is a Windows CLI that lets a supervising agent (Claude Code) start and resume headless coding subagents. Every shell command the subagent proposes is classified deterministically and checked against a permission policy that is fixed when the session starts. Calls the policy does not cover are not executed. They become pending items with stable ids, and the supervisor approves or denies them by id on resume.
+Subordinate is a Windows and Linux CLI that lets a supervising agent (Claude Code) start and resume headless coding subagents. Every shell command the subagent proposes is classified deterministically and checked against a permission policy that is fixed when the session starts. Calls the policy does not cover are not executed. They become pending items with stable ids, and the supervisor approves or denies them by id on resume.
 
 ## Build
 
@@ -9,7 +9,7 @@ dotnet build Subordinate.slnx
 dotnet test tests/Subordinate.Tests
 ```
 
-Every build also publishes a self-contained win-x64 copy and deploys it to `bin\` under the Subordinate home: `%SUBORDINATE_HOME%\bin`, or `~/.subordinate/bin` when the variable is not set. Use `~/.subordinate/bin/subordinate.exe`. It needs no installed .NET runtime and does not break when the repo is cleaned. If a session is running from that copy, its files are locked. The deploy then logs a warning and keeps the old copy, and the next build retries.
+Every build also publishes a self-contained copy and deploys it to `bin` under the Subordinate home. On Windows that is `%SUBORDINATE_HOME%\bin`, or `%USERPROFILE%\.subordinate\bin` when the variable is not set, and the program is `subordinate.exe`. On Linux that is `$SUBORDINATE_HOME/bin`, or `~/.subordinate/bin` when the variable is not set, and the program is `subordinate`. The copy needs no installed .NET runtime and does not break when the repo is cleaned. If a session is running from that copy, its files are locked. The deploy then logs a warning and keeps the old copy, and the next build retries.
 
 ## Configuration
 
@@ -43,11 +43,19 @@ The composed prompt is saved as the first message of the session's transcript. E
 
 Supported shells:
 
-| Token | Shell | Requirement |
-| --- | --- | --- |
-| `bash` | Git Bash (msys) | 5.2 or 5.3. The WSL `bash.exe` in System32 is never used. |
-| `powershell` | Windows PowerShell | 5.1 |
-| `pwsh` | PowerShell 7 | 7.6.4 or later 7.6.x, the range the parser supports. Other versions fail closed. |
+| Token | Shell | Platform | Requirement |
+| --- | --- | --- | --- |
+| `bash` | Git Bash (msys) on Windows, bash on Linux | Windows, Linux | 5.2 or 5.3. On Windows the WSL `bash.exe` in System32 is never used. |
+| `powershell` | Windows PowerShell | Windows | 5.1 |
+| `pwsh` | PowerShell 7 | Windows, Linux | 7.6.4 or later 7.6.x, the range the parser supports. Other versions fail closed. |
+
+## Linux
+
+Subordinate runs on Linux with the same CLI, output contract and policy. `bash` must be 5.2 or 5.3, and `pwsh` follows the same 7.6.4 to 7.6.x rule as on Windows. `powershell` is Windows only; use `--shell bash` or `--shell pwsh` on Linux.
+
+Paths are case sensitive, and a path that contains a backslash is rejected by the classifier because bash treats a backslash as part of a file name while pwsh cmdlets treat it as a separator. Write POSIX paths with forward slashes.
+
+On Linux the containment check also resolves symbolic links. A link inside the workdir that points outside it is treated as outside, so reading or writing through it needs `read-outside` or `write-outside`. The check resolves the longest existing prefix of each path. Links created by an earlier part of the same command are not visible at classification time. The classifier is a deterministic floor, not a sandbox.
 
 ## Output contract
 
@@ -226,3 +234,15 @@ On resume, Subordinate ran `rm build.log` once, through the gate, and sent the s
 - While a batch of tool calls runs, the state of each call is saved before it executes: not started, started, succeeded, failed or deferred. If the worker dies mid-batch, `resume` restores the batch. Finished calls keep their results, calls that never started run now, and a call that had started is reported as interrupted instead of being run twice. The model is not asked again until the batch is complete.
 - A lock file held with exclusive access prevents two processes from running the same session (`session_busy`).
 - Resume is refused (`state_conflict`) when the pending list, the transcript and the interrupted batch disagree.
+
+## Testing through WSL
+
+The Linux tests run in a dedicated WSL distro that is created for this work. Nothing in the build script, the projects or the test suite starts WSL. The scripts are:
+
+- `pwsh -NoProfile -File scripts/wsl/Install-TestDistro.ps1` creates or repairs the distro. It takes several minutes and only needs to run once.
+- `pwsh -NoProfile -File scripts/wsl/Invoke-LinuxTests.ps1` syncs the source, builds, runs the tests and stops the distro. Add `-Smoke` to run the smoke checks and `-Live` to include one live model run.
+- `pwsh -NoProfile -File scripts/wsl/Stop-TestDistro.ps1` stops the distro and gives the memory back.
+
+The distro is stopped after every run because WSL 2 uses a lot of memory. Removing it is the owner's decision: `wsl --unregister subordinate-linux`. Do not run that command unless you created the distro yourself.
+
+`scripts/test-linux.sh` and `scripts/smoke.sh` also run on any Linux machine. See `LINUX_TESTING.md`.

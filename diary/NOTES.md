@@ -77,6 +77,14 @@
 - Linux verification: build succeeded, 249 passed, 0 failed, 7 skipped, 256 total. All 7 smoke checks passed and live was skipped. WSL stopped.
 - Limit for the README: links created by an earlier part of the same command are not visible at classification time. The classifier is a deterministic floor, not a sandbox.
 
+## Phase 8
+- README.md now covers Windows and Linux, the platform column in the shell table, the Linux path and symlink rules, and the WSL test scripts.
+- LINUX_TESTING.md is written for the external testers.
+- The live smoke check initially failed because pending.json is indented and the smoke script matched only compact "id":"..." text. The pattern now accepts whitespace around the colon.
+- Final Windows verification: build 0 warnings, 258 passed, 17 skipped, 275 total, 6 smoke passes, deploy guard passed.
+- Final Linux verification: build succeeded, 249 passed, 0 failed, 7 skipped, 256 total. All 8 smoke checks passed, including the live approval round trip. WSL stopped and docker-desktop remains the default.
+- Open issues: none.
+
 ## Commits
 - Phase 0: cc03455 Adds Linux support plan, work diary and a build script that skips deployment
 - Phase 1: 1f02022 Adds scripts for testing on Linux through WSL
@@ -84,6 +92,8 @@
 - Phase 3: 47d88f5 Adds Linux path handling
 - Phase 4: d1aa5e6 Adds Linux shell discovery
 - Phase 5: 3a0e6f6 Adds Linux publish and deploy target
+- Phase 6: 9a46ea7 Adds detached worker launch on Linux
+- Phase 7: 16c6dec Hardens classification for Linux
 
 ## Decisions
 - None yet.

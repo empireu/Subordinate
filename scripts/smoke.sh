@@ -304,7 +304,7 @@ else
 
                 while [ "$status" -eq 0 ] && printf '%s' "$output" | grep -q '"state":"awaiting_approval"' && [ "$rounds" -lt 3 ]; do
                     run_dir=$(printf '%s' "$output" | grep -o '"run_dir":"[^"]*"' | head -n 1 | sed 's/^"run_dir":"//; s/"$//')
-                    pending_id=$(grep -o '"id":"[0-9a-f]\{10\}"' "$run_dir/pending.json" 2>/dev/null | head -n 1 | grep -o '[0-9a-f]\{10\}')
+                    pending_id=$(grep -o '"id"[[:space:]]*:[[:space:]]*"[0-9a-f]\{10\}"' "$run_dir/pending.json" 2>/dev/null | head -n 1 | grep -o '[0-9a-f]\{10\}')
 
                     if [ -z "$pending_id" ]; then
                         break
@@ -318,7 +318,21 @@ else
                 if [ -f "$live_work/hello.txt" ]; then
                     pass live
                 else
-                    fail live "hello.txt was not created"
+                    run_dir=$(printf '%s' "$output" | grep -o '"run_dir":"[^"]*"' | head -n 1 | sed 's/^"run_dir":"//; s/"$//')
+                    last_state=$(printf '%s' "$output" | grep -o '"state":"[^"]*"' | head -n 1 | sed 's/^"state":"//; s/"$//')
+                    detail="last state: ${last_state:-unknown}"
+
+                    if [ -n "$run_dir" ] && [ -f "$run_dir/result.md" ]; then
+                        detail="$detail; result: $(head -c 300 "$run_dir/result.md" | tr '\n' ' ')"
+                    fi
+
+                    if [ -n "$run_dir" ] && [ -f "$run_dir/pending.json" ]; then
+                        detail="$detail; pending: $(head -c 300 "$run_dir/pending.json" | tr '\n' ' ')"
+                    else
+                        detail="$detail; pending.json missing"
+                    fi
+
+                    fail live "hello.txt was not created; $detail"
                 fi
             fi
         fi
