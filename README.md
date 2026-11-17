@@ -13,7 +13,7 @@ dotnet test tests/Subordinate.Tests
 
 Every build also publishes a self-contained copy and deploys it to `bin` under the Subordinate home. On Windows that is `%SUBORDINATE_HOME%\bin`, or `%USERPROFILE%\.subordinate\bin` when the variable is not set, and the program is `subordinate.exe`. On Linux that is `$SUBORDINATE_HOME/bin`, or `~/.subordinate/bin` when the variable is not set, and the program is `subordinate`. The copy needs no installed .NET runtime and does not break when the repo is cleaned. If a session is running from that copy, its files are locked. The deploy then logs a warning and keeps the old copy, and the next build retries.
 
-The same build deploys the session monitor to `bin/tui` under the home, as `subordinate-tui.exe` on Windows and `subordinate-tui` on Linux. See [Session monitor](#session-monitor).
+The same build deploys the session monitor to `bin/tui` under the home, as `subordinate-tui.exe` on Windows and `subordinate-tui` on Linux. Put that folder on your PATH to start it by name from any terminal; [GUIDE.md](GUIDE.md#22-build-and-deploy) has the commands for both platforms. See [Session monitor](#session-monitor).
 
 ## Configuration
 

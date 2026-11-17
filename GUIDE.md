@@ -25,6 +25,7 @@ Every shell command and file write a subagent attempts is classified determinist
 2. Clone this repository.
 3. Open Claude Code/The Agent in the repository and say: "Read GUIDE.md and set up Subordinate for me, following Part 2."
 4. When the agent is done, try it in any project: "Have Subordinate review the changes in this branch from three angles", or "Have Subordinate write tests for this spec."
+5. To watch the subagents work, open a new terminal and run `subordinate-tui`. The setup puts it on your PATH. It lists every session, newest and running first, with a live hint of what each one is doing. Press Enter to open one and see its full history, with the reasoning streaming in at the bottom. Esc goes back, `q` quits from the list. Windows Terminal or any terminal with 24-bit color shows the intended colors.
 
 ### Good to know
 
@@ -65,6 +66,31 @@ The build publishes a self-contained copy to the Subordinate home:
 | Linux    | `~/.subordinate/bin/subordinate`                 |
 
 If `SUBORDINATE_HOME` is set, the home is that directory instead. Record the absolute path of the program. Below, `SUBORDINATE` stands for it. The same build deploys the monitor to `%USERPROFILE%\.subordinate\bin\tui\subordinate-tui.exe` on Windows and `~/.subordinate/bin/tui/subordinate-tui` on Linux.
+
+Then put the monitor's folder on the user's PATH, so the user can run `subordinate-tui` from any terminal. Only the `bin/tui` folder goes on PATH. The agent keeps calling `SUBORDINATE` by its full path. Tell the user you are changing their PATH. If the home is not the default, replace the folder below with `<home>/bin/tui`.
+
+On Windows, in PowerShell. This appends to the user PATH in the registry, keeps the value's type so entries such as `%USERPROFILE%\...` stay intact, skips the change if the folder is already there, and tells Windows that the environment changed:
+
+```powershell
+$tui = Join-Path $env:USERPROFILE ".subordinate\bin\tui"
+$key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey("Environment", $true)
+$path = $key.GetValue("Path", "", [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+if (($path -split ';') -notcontains $tui) { $key.SetValue("Path", ((@($path.TrimEnd(';'), $tui) | Where-Object { $_ }) -join ';'), [Microsoft.Win32.RegistryValueKind]::ExpandString) }
+$key.Close()
+Add-Type -Namespace Win32 -Name Native -MemberDefinition '[DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint Msg, UIntPtr wParam, string lParam, uint fuFlags, uint uTimeout, out UIntPtr lpdwResult);'
+$result = [UIntPtr]::Zero
+[Win32.Native]::SendMessageTimeout([IntPtr]0xffff, 0x1A, [UIntPtr]::Zero, "Environment", 2, 5000, [ref]$result) | Out-Null
+```
+
+Do not use `setx` for this. It cuts the PATH at 1024 characters. `[Environment]::SetEnvironmentVariable` is also unsuitable, because it rewrites the value as a plain string and expands every `%VARIABLE%` in it. The folder also holds the .NET `createdump.exe`, which is harmless on PATH.
+
+On Linux, add the folder to the shell profile once:
+
+```bash
+grep -q '.subordinate/bin/tui' ~/.bashrc || echo 'export PATH="$HOME/.subordinate/bin/tui:$PATH"' >> ~/.bashrc
+```
+
+Terminals that are already open keep their old PATH. Tell the user to open a new terminal, or on Windows to restart Windows Terminal if a new tab still cannot find `subordinate-tui`. Check it with `subordinate-tui --version` in a new terminal.
 
 ### 2.3 Configure the models
 
