@@ -37,6 +37,8 @@ public sealed class ModelEntry
     public int? MaxOutputTokens { get; set; }
 
     public string? ReasoningEffort { get; set; }
+
+    public int? ContextWindow { get; set; }
 }
 
 public sealed class ShellPathsEntry

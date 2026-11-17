@@ -257,6 +257,8 @@ public sealed class SessionRecord
 
     public CountersRecord Counters { get; set; } = new();
 
+    public long ContextTokens { get; set; }
+
     public string? FinalText { get; set; }
 
     public int PendingCount => Pending.Count(item => item.Status == PendingStatuses.Pending);

@@ -753,6 +753,11 @@ public sealed class SessionRunner
             run.Counters.OutputTokens += outputTokens;
         }
 
+        if (modelCalls > 0 && _counting.LastUsageReported)
+        {
+            _record.ContextTokens = _counting.LastInputTokens + _counting.LastOutputTokens;
+        }
+
         _countedModelCalls = _counting.ModelCalls;
         _countedInputTokens = _counting.InputTokens;
         _countedCachedInputTokens = _counting.CachedInputTokens;
@@ -908,7 +913,8 @@ public sealed class SessionRunner
                     RunCounters = _record.CurrentRun?.Counters ?? new CountersRecord(),
                     SessionCounters = _record.Counters,
                     TurnsRemaining = TurnsRemaining(),
-                    LastActivity = _lastActivity
+                    LastActivity = _lastActivity,
+                    ContextTokens = _record.ContextTokens
                 });
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)

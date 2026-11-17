@@ -31,6 +31,8 @@ public sealed class StatusSnapshot
     public required int TurnsRemaining { get; init; }
 
     public required string LastActivity { get; init; }
+
+    public required long ContextTokens { get; init; }
 }
 
 /// <summary>
@@ -80,6 +82,7 @@ public static class RunArtifacts
             writer.WriteNumber("turns_remaining", status.TurnsRemaining);
             writer.WriteNumber("pending_count", status.PendingCount);
             writer.WriteString("last_activity", status.LastActivity);
+            writer.WriteNumber("context_tokens", status.ContextTokens);
             writer.WriteEndObject();
         }, true);
 

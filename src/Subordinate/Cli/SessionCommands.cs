@@ -694,7 +694,8 @@ internal static class SessionCommands
             RunCounters = run.Counters,
             SessionCounters = record.Counters,
             TurnsRemaining = record.Limits.MaxTurns > 0 ? Math.Max(0, record.Limits.MaxTurns - run.Counters.ModelCalls) : 0,
-            LastActivity = "closed by the supervisor"
+            LastActivity = "closed by the supervisor",
+            ContextTokens = record.ContextTokens
         });
     }
 
