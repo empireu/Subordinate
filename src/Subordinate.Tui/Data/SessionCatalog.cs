@@ -51,6 +51,8 @@ public sealed class SessionSummary
 
     public required DateTimeOffset UpdatedAt { get; init; }
 
+    public required DateTimeOffset SessionStartedAt { get; init; }
+
     public required bool HasFinalText { get; init; }
 
     public double? ElapsedSeconds { get; init; }
@@ -302,6 +304,7 @@ public sealed class SessionCatalog
             ContextTokens = record.ContextTokens,
             ErrorMessage = record.Error?.Message,
             UpdatedAt = record.UpdatedAt,
+            SessionStartedAt = record.Runs.Count > 0 ? record.Runs[0].StartedAt : record.CreatedAt,
             HasFinalText = record.FinalText != null,
             ElapsedSeconds = status?.ElapsedSeconds,
             TurnsRemaining = status?.TurnsRemaining,
