@@ -50,6 +50,13 @@ public sealed class ShellPathsEntry
     public string? Pwsh { get; set; }
 }
 
+public sealed class MonitorEntry
+{
+    public bool Enabled { get; set; } = true;
+
+    public string? SocketPath { get; set; }
+}
+
 public sealed class DefaultsEntry
 {
     public string Shell { get; set; } = "bash";
@@ -93,6 +100,8 @@ public sealed class SubordinateConfig
     public ShellPathsEntry Shells { get; set; } = new();
 
     public DefaultsEntry Defaults { get; set; } = new();
+
+    public MonitorEntry Monitor { get; set; } = new();
 
     public static string ResolveHome()
     {
