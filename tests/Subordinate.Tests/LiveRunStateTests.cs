@@ -267,6 +267,23 @@ public class LiveRunStateTests
     }
 
     [Fact]
+    public void SnapshotTailsNeverExceedTheCap()
+    {
+        var state = new LiveRunState();
+        state.Apply(Hello());
+        state.Apply(new MonitorTurnStarted(1, Time));
+
+        state.Apply(new MonitorReasoningDelta(new string('a', 50_000)));
+        state.Apply(new MonitorTextDelta(new string('t', 40_000)));
+        var snapshot = state.CreateSnapshot();
+
+        Assert.Equal(MonitorProtocol.LiveTextTailCharacters, snapshot.Reasoning.Length);
+        Assert.Equal(MonitorProtocol.LiveTextTailCharacters, snapshot.Text.Length);
+        Assert.Equal(50_000, snapshot.ReasoningCharacters);
+        Assert.Equal(40_000, snapshot.TextCharacters);
+    }
+
+    [Fact]
     public void ReasoningTailDoesNotSplitSurrogatePairs()
     {
         var state = new LiveRunState();

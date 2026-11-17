@@ -32,11 +32,11 @@ public sealed class LiveRunState : IEquatable<LiveRunState>
 
     public int ModelCall { get; private set; }
 
-    public string Reasoning => _reasoning.ToString();
+    public string Reasoning => Tail(_reasoning);
 
     public long ReasoningCharacters { get; private set; }
 
-    public string Text => _text.ToString();
+    public string Text => Tail(_text);
 
     public long TextCharacters { get; private set; }
 
@@ -309,6 +309,25 @@ public sealed class LiveRunState : IEquatable<LiveRunState>
         }
 
         builder.Remove(0, remove);
+    }
+
+    private static string Tail(StringBuilder builder)
+    {
+        var cap = MonitorProtocol.LiveTextTailCharacters;
+
+        if (builder.Length <= cap)
+        {
+            return builder.ToString();
+        }
+
+        var start = builder.Length - cap;
+
+        if (char.IsLowSurrogate(builder[start]) && char.IsHighSurrogate(builder[start - 1]))
+        {
+            start++;
+        }
+
+        return builder.ToString(start, builder.Length - start);
     }
 
     private static void SetTail(StringBuilder builder, string text)

@@ -148,10 +148,17 @@ public sealed class SocketMonitorFeed : IMonitorFeed
         while (!_stop.IsCancellationRequested)
         {
             Socket? socket;
+            bool finished;
 
             lock (_lock)
             {
                 socket = _socket;
+                finished = _disposed && (socket == null || (_queue.Count == 0 && !_resync));
+            }
+
+            if (finished)
+            {
+                break;
             }
 
             if (socket == null)
@@ -187,10 +194,7 @@ public sealed class SocketMonitorFeed : IMonitorFeed
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token);
             timeout.CancelAfter(TimeSpan.FromSeconds(1));
             await candidate.ConnectAsync(new UnixDomainSocketEndPoint(_socketPath), timeout.Token);
-            var hello = MonitorProtocol.Serialize(CreateHello());
-            var snapshot = MonitorProtocol.Serialize(_state.CreateSnapshot());
-            var payload = Encoding.ASCII.GetBytes(hello + "\n" + snapshot + "\n");
-            await candidate.SendAsync(payload, SocketFlags.None, timeout.Token);
+            MonitorSnapshot snapshot;
 
             lock (_lock)
             {
@@ -200,11 +204,26 @@ public sealed class SocketMonitorFeed : IMonitorFeed
                     return;
                 }
 
-                _socket = candidate;
+                snapshot = _state.CreateSnapshot();
                 _connected = true;
                 _queue.Clear();
                 _queuedCharacters = 0;
                 _resync = false;
+            }
+
+            var payload = Encoding.ASCII.GetBytes(MonitorProtocol.Serialize(CreateHello()) + "\n" + MonitorProtocol.Serialize(snapshot) + "\n");
+            await candidate.SendAsync(payload, SocketFlags.None, timeout.Token);
+
+            lock (_lock)
+            {
+                if (_disposed)
+                {
+                    candidate.Dispose();
+                    ResetConnectionLocked();
+                    return;
+                }
+
+                _socket = candidate;
             }
 
             candidate = null;
@@ -212,8 +231,25 @@ public sealed class SocketMonitorFeed : IMonitorFeed
         catch (Exception)
         {
             candidate?.Dispose();
+
+            lock (_lock)
+            {
+                if (_socket == null)
+                {
+                    ResetConnectionLocked();
+                }
+            }
+
             await DelayAsync(_connectInterval);
         }
+    }
+
+    private void ResetConnectionLocked()
+    {
+        _connected = false;
+        _queue.Clear();
+        _queuedCharacters = 0;
+        _resync = false;
     }
 
     private async Task WaitForWorkAsync()
@@ -286,10 +322,7 @@ public sealed class SocketMonitorFeed : IMonitorFeed
         {
             _socket?.Dispose();
             _socket = null;
-            _connected = false;
-            _queue.Clear();
-            _queuedCharacters = 0;
-            _resync = false;
+            ResetConnectionLocked();
         }
     }
 

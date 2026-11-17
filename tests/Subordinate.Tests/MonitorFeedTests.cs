@@ -72,6 +72,25 @@ public class MonitorFeedTests
     }
 
     [Fact]
+    public async Task DisposeDeliversTheLastEventWithoutWaitingOutTheTimeout()
+    {
+        using var path = new TestSocketPath();
+        using var listener = new TestMonitorListener(path.Path);
+        var feed = new SocketMonitorFeed(path.Path, RunInfo(), TimeSpan.FromMilliseconds(50), TimeSpan.FromMilliseconds(10), TimeSpan.FromSeconds(1));
+        feed.Start();
+        await MonitorTestWait.WaitUntilAsync(() => feed.IsConnected, TimeSpan.FromSeconds(5), "The feed did not connect.");
+        await listener.WaitForLineAsync(line => line.Contains("\"type\":\"snapshot\""), TimeSpan.FromSeconds(5));
+
+        feed.Publish(new MonitorRunEnded("finished", null));
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        feed.Dispose();
+        stopwatch.Stop();
+
+        await listener.WaitForLineAsync(line => line.Contains("\"type\":\"run_ended\""), TimeSpan.FromSeconds(5));
+        Assert.True(stopwatch.Elapsed < TimeSpan.FromMilliseconds(400), $"Dispose took {stopwatch.ElapsedMilliseconds} ms.");
+    }
+
+    [Fact]
     public async Task SnapshotCarriesStatePublishedBeforeTheListenerStarts()
     {
         using var path = new TestSocketPath();
