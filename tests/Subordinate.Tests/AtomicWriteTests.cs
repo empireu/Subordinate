@@ -54,11 +54,11 @@ public class AtomicWriteTests
     }
 
     [Fact]
-    public async Task Load_never_sees_a_partial_record()
+    public async Task Load_never_fails_or_sees_a_partial_record_while_saving()
     {
         using var harness = new SessionHarness();
         var record = harness.Load();
-        var corruptRecords = new List<SubordinateException>();
+        var failures = new List<Exception>();
         var successes = 0;
 
         var saver = Task.Run(() =>
@@ -79,17 +79,11 @@ public class AtomicWriteTests
                     harness.Store.Load(harness.Paths);
                     Interlocked.Increment(ref successes);
                 }
-                catch (SubordinateException ex) when (ex.Code == ErrorCode.UnknownSession)
+                catch (Exception ex) when (ex is SubordinateException or IOException or UnauthorizedAccessException)
                 {
-                }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-                {
-                }
-                catch (SubordinateException ex)
-                {
-                    lock (corruptRecords)
+                    lock (failures)
                     {
-                        corruptRecords.Add(ex);
+                        failures.Add(ex);
                     }
                 }
             }
@@ -97,7 +91,7 @@ public class AtomicWriteTests
 
         await Task.WhenAll(saver, loader).WaitAsync(TimeSpan.FromSeconds(60));
 
-        Assert.Empty(corruptRecords);
+        Assert.True(failures.Count == 0, string.Join(Environment.NewLine, failures.Select(failure => failure.GetType().Name + ": " + failure.Message).Distinct()));
         Assert.True(successes > 0, "No load succeeded while the record was being saved.");
     }
 

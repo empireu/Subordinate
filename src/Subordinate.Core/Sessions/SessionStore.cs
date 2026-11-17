@@ -106,6 +106,8 @@ public sealed class SessionLock : IDisposable
 public sealed class SessionStore
 {
     public const int MaxNameLength = 80;
+    private const int LoadAttempts = 20;
+    private const int LoadRetryDelayMilliseconds = 25;
 
     public static readonly JsonSerializerOptions RecordJsonOptions = new()
     {
@@ -230,14 +232,7 @@ public sealed class SessionStore
     {
         try
         {
-            string content;
-
-            using (var stream = new FileStream(paths.RecordFile, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
-            using (var reader = new StreamReader(stream, Encoding.UTF8))
-            {
-                content = reader.ReadToEnd();
-            }
-
+            var content = ReadRecordText(paths);
             var record = JsonSerializer.Deserialize<SessionRecord>(content, RecordJsonOptions);
 
             if (record == null || record.Schema != 1)
@@ -247,13 +242,33 @@ public sealed class SessionStore
 
             return record;
         }
-        catch (FileNotFoundException)
+        catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
         {
             throw new SubordinateException(ErrorCode.UnknownSession, $"No session record exists at {paths.RecordFile}.");
         }
         catch (JsonException ex)
         {
             throw new SubordinateException(ErrorCode.StateConflict, $"The session record at {paths.RecordFile} is corrupt: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    ///     Reads the record file, retrying while a concurrent save is swapping it in. On Windows that swap briefly hides the file or locks it.
+    /// </summary>
+    private static string ReadRecordText(SessionPaths paths)
+    {
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                using var stream = new FileStream(paths.RecordFile, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                using var reader = new StreamReader(stream, Encoding.UTF8);
+                return reader.ReadToEnd();
+            }
+            catch (Exception ex) when (attempt < LoadAttempts && (ex is IOException or UnauthorizedAccessException) && ex is not DirectoryNotFoundException && System.IO.Directory.Exists(paths.Directory))
+            {
+                Thread.Sleep(LoadRetryDelayMilliseconds);
+            }
         }
     }
 
