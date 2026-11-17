@@ -5,6 +5,7 @@ using Subordinate.Tui.Data;
 using Subordinate.Tui.Interface;
 using Subordinate.Tui.Live;
 using Terminal.Gui.App;
+using Terminal.Gui.Drawing;
 using Terminal.Gui.Drivers;
 using Terminal.Gui.Input;
 using Terminal.Gui.Testing;
@@ -377,6 +378,22 @@ public class MonitorWindowTests
         Assert.Contains("1 transcript line could not be read", harness.Screen);
     }
 
+    [Fact]
+    public void MarkdownInTheHistoryIsDrawnWithStyles()
+    {
+        using var harness = new WindowHarness();
+        harness.Data.CreateSession("markdown", SessionStates.Finished, DateTimeOffset.UtcNow.AddMinutes(-1), "Make **this** bold.");
+        harness.Refresh();
+        harness.OpenFirst();
+        harness.WaitForScreen(screen => screen.Contains("Make this bold.", StringComparison.Ordinal), "The task should load without its markers");
+
+        var (row, column) = harness.Find("Make this bold.");
+
+        Assert.False(harness.StyleAt(row, column).HasFlag(TextStyle.Bold));
+        Assert.True(harness.StyleAt(row, column + 5).HasFlag(TextStyle.Bold));
+        Assert.False(harness.StyleAt(row, column + 10).HasFlag(TextStyle.Bold));
+    }
+
     private static ChatMessage Assistant(string text)
     {
         return new ChatMessage { Role = ChatRole.Assistant, Contents = [new TextContent { Text = text }] };
@@ -435,6 +452,35 @@ public class MonitorWindowTests
         {
             _app.Driver!.SetScreenSize(width, height);
             _app.LayoutAndDraw(true);
+        }
+
+        public (int Row, int Column) Find(string text)
+        {
+            var contents = _app.Driver!.Contents!;
+
+            for (var row = 0; row < contents.GetLength(0); row++)
+            {
+                var line = new System.Text.StringBuilder();
+
+                for (var column = 0; column < contents.GetLength(1); column++)
+                {
+                    line.Append(contents[row, column].Grapheme is { Length: 1 } grapheme ? grapheme : " ");
+                }
+
+                var index = line.ToString().IndexOf(text, StringComparison.Ordinal);
+
+                if (index >= 0)
+                {
+                    return (row, index);
+                }
+            }
+
+            throw new InvalidOperationException($"\"{text}\" is not on the screen.");
+        }
+
+        public TextStyle StyleAt(int row, int column)
+        {
+            return _app.Driver!.Contents![row, column].Attribute?.Style ?? TextStyle.None;
         }
 
         public void Key(Key key)

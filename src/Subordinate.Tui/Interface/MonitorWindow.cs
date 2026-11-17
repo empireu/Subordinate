@@ -26,8 +26,10 @@ public sealed class MonitorWindow : IDisposable
         List.KeystrokeNavigator = null;
         DetailList.KeystrokeNavigator = null;
         List.SetSource(Rows);
-        DetailList.SetSource(DetailLines);
+        DetailList.Source = new StyledListSource(DetailLines, item => DetailStyles?.Invoke(item));
     }
+
+    public Func<int, string?>? DetailStyles { get; set; }
 
     public string Home { get; }
 

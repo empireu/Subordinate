@@ -1,10 +1,14 @@
 namespace Subordinate.Tui.Presentation;
 
-public sealed record HistoryLine(string Text, HistoryBlockKind Kind, HistoryBlockRole Role);
+/// <summary>
+///     One screen line of the history. Styles holds one <see cref="MarkdownStyle" /> per character of Text, or null when no character is styled.
+/// </summary>
+public sealed record HistoryLine(string Text, HistoryBlockKind Kind, HistoryBlockRole Role, string? Styles = null);
 
 public static class HistoryLayout
 {
     public const int BodyIndent = 2;
+    private static readonly string IndentStyles = new((char)MarkdownStyle.None, BodyIndent);
 
     /// <summary>
     ///     Wraps blocks into screen lines. Plain output draws headers as dashed rules, colored output leaves them to a background color.
@@ -31,6 +35,12 @@ public static class HistoryLayout
                 }
                 default:
                 {
+                    if (block.Markdown)
+                    {
+                        AppendMarkdown(block, width, plain, lines);
+                        break;
+                    }
+
                     var indent = new string(' ', BodyIndent);
 
                     foreach (var line in TextWrap.Wrap(block.Text, Math.Max(1, width - BodyIndent), 0))
@@ -41,6 +51,22 @@ public static class HistoryLayout
                     break;
                 }
             }
+        }
+    }
+
+    private static void AppendMarkdown(HistoryBlock block, int width, bool plain, List<HistoryLine> lines)
+    {
+        var bodyWidth = Math.Max(1, width - BodyIndent);
+        var rendered = block.LastLines > 0
+            ? MarkdownRenderer.RenderTail(block.Text, bodyWidth, block.LastLines, plain)
+            : MarkdownRenderer.Render(block.Text, bodyWidth, plain);
+        var indent = new string(' ', BodyIndent);
+
+        foreach (var line in rendered)
+        {
+            var empty = line.Text.Length == 0;
+            var styles = plain || empty || line.Styles == null ? null : IndentStyles + line.Styles;
+            lines.Add(new HistoryLine(empty ? string.Empty : indent + line.Text, block.Kind, block.Role, styles));
         }
     }
 

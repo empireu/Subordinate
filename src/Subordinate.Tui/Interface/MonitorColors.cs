@@ -25,6 +25,7 @@ public static class MonitorColors
     private static readonly Color Yellow = new(0xe0, 0xaf, 0x68);
     private static readonly Color Red = new(0xf7, 0x76, 0x8e);
     private static readonly Color Magenta = new(0xbb, 0x9a, 0xf7);
+    private static readonly Color Teal = new(0x73, 0xda, 0xca);
 
     public static readonly Scheme Window = new(new TerminalAttribute(Foreground, Background))
     {
@@ -100,5 +101,64 @@ public static class MonitorColors
                 _ => null
             }
         };
+    }
+
+    /// <summary>
+    ///     Applies a Markdown style on top of the attribute a line is drawn with, keeping a selection background.
+    /// </summary>
+    public static TerminalAttribute ForMarkdown(TerminalAttribute line, MarkdownStyle style)
+    {
+        if (style == MarkdownStyle.None)
+        {
+            return line;
+        }
+
+        var foreground = line.Foreground;
+        var background = line.Background;
+        var textStyle = line.Style;
+
+        if (style.HasFlag(MarkdownStyle.CodeBlock) && background == Background)
+        {
+            background = BackgroundDark;
+        }
+
+        if (style.HasFlag(MarkdownStyle.Code))
+        {
+            foreground = Teal;
+        }
+
+        if (style.HasFlag(MarkdownStyle.Heading))
+        {
+            foreground = Blue;
+            textStyle |= TextStyle.Bold;
+        }
+
+        if (style.HasFlag(MarkdownStyle.Link))
+        {
+            foreground = Cyan;
+            textStyle |= TextStyle.Underline;
+        }
+
+        if (style.HasFlag(MarkdownStyle.Marker))
+        {
+            foreground = Comment;
+        }
+
+        if (style.HasFlag(MarkdownStyle.Bold))
+        {
+            textStyle |= TextStyle.Bold;
+        }
+
+        if (style.HasFlag(MarkdownStyle.Italic))
+        {
+            textStyle |= TextStyle.Italic;
+        }
+
+        if (style.HasFlag(MarkdownStyle.Strikethrough))
+        {
+            textStyle |= TextStyle.Strikethrough;
+        }
+
+        return new TerminalAttribute(foreground, background, textStyle);
     }
 }

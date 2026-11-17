@@ -49,7 +49,7 @@ public static class PrintRenderer
             HistoryLayout.Append(HistoryFormatter.FormatMessage(message, state, true, true), width, true, lines);
         }
 
-        HistoryLayout.Append(HistoryFormatter.FormatLive(live, now, width), width, true, lines);
+        HistoryLayout.Append(HistoryFormatter.FormatLive(live, now), width, true, lines);
 
         foreach (var line in lines)
         {

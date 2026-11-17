@@ -27,7 +27,10 @@ public enum HistoryBlockRole
     Spacer
 }
 
-public sealed record HistoryBlock(HistoryBlockKind Kind, HistoryBlockRole Role, string Text);
+/// <summary>
+///     A run of history text. A Markdown body with LastLines set shows only its last lines and is sanitized during layout.
+/// </summary>
+public sealed record HistoryBlock(HistoryBlockKind Kind, HistoryBlockRole Role, string Text, bool Markdown = false, int LastLines = 0);
 
 /// <summary>
 ///     Carries what earlier messages established, so a tool result can be paired with its call.
@@ -56,7 +59,6 @@ public static class HistoryFormatter
     public const int CollapsedOutputLines = 8;
     public const int ExpandedOutputLines = 200;
     public const int LiveTailLines = 12;
-    private static readonly char[] LineBreaks = ['\n', '\r'];
 
     public static IReadOnlyList<HistoryBlock> FormatMessage(ChatMessage message, HistoryFormatState state, bool showReasoning, bool expandOutputs)
     {
@@ -73,7 +75,7 @@ public static class HistoryFormatter
             {
                 var isTask = !state.SeenUser;
                 state.SeenUser = true;
-                AddCard(blocks, state, isTask ? HistoryBlockKind.Task : HistoryBlockKind.Supervisor, isTask ? "task" : "supervisor", TerminalText.Sanitize(message.GetText()));
+                AddCard(blocks, state, isTask ? HistoryBlockKind.Task : HistoryBlockKind.Supervisor, isTask ? "task" : "supervisor", TerminalText.Sanitize(message.GetText()), true);
                 break;
             }
             case ChatRole.Assistant:
@@ -95,7 +97,7 @@ public static class HistoryFormatter
         return blocks;
     }
 
-    public static IReadOnlyList<HistoryBlock> FormatLive(LiveSessionSnapshot? live, DateTimeOffset now, int width)
+    public static IReadOnlyList<HistoryBlock> FormatLive(LiveSessionSnapshot? live, DateTimeOffset now)
     {
         if (live == null || live.State.Phase == "ended")
         {
@@ -103,7 +105,6 @@ public static class HistoryFormatter
         }
 
         var state = live.State;
-        var bodyWidth = Math.Max(1, width - HistoryLayout.BodyIndent);
         var blocks = new List<HistoryBlock>();
 
         switch (state.Phase)
@@ -111,29 +112,29 @@ public static class HistoryFormatter
             case "reasoning":
             {
                 var duration = Units.FormatDuration((now - state.PhaseStartedAt).TotalSeconds);
-                AddLive(blocks, $"live  thinking {Units.FormatTokens(state.ReasoningCharacters)} characters, {duration}", TailLines(state.Reasoning, bodyWidth, LiveTailLines));
+                AddLive(blocks, $"live  thinking {Units.FormatTokens(state.ReasoningCharacters)} characters, {duration}", state.Reasoning, true);
                 break;
             }
             case "answering":
             {
-                AddLive(blocks, "live  writing", TailLines(state.Text, bodyWidth, LiveTailLines));
+                AddLive(blocks, "live  writing", state.Text, true);
                 break;
             }
             case "running_tools" when state.ActiveTool != null:
             {
                 var duration = Units.FormatDuration((now - state.ActiveTool.StartedAt).TotalSeconds);
-                AddLive(blocks, $"live  running {TerminalText.Sanitize(state.ActiveTool.Tool)} {duration}", TerminalText.Sanitize(state.ActiveTool.Summary));
+                AddLive(blocks, $"live  running {TerminalText.Sanitize(state.ActiveTool.Tool)} {duration}", TerminalText.Sanitize(state.ActiveTool.Summary), false);
                 break;
             }
             case "waiting_for_model":
             {
                 var duration = Units.FormatDuration((now - state.PhaseStartedAt).TotalSeconds);
-                AddLive(blocks, $"live  waiting for the model {duration}", null);
+                AddLive(blocks, $"live  waiting for the model {duration}", null, false);
                 break;
             }
             case "starting":
             {
-                AddLive(blocks, "live  starting", null);
+                AddLive(blocks, "live  starting", null, false);
                 break;
             }
         }
@@ -151,7 +152,7 @@ public static class HistoryFormatter
                 {
                     if (showReasoning)
                     {
-                        AddCard(blocks, state, HistoryBlockKind.Thinking, "thinking", TerminalText.Sanitize(reasoning.Text));
+                        AddCard(blocks, state, HistoryBlockKind.Thinking, "thinking", TerminalText.Sanitize(reasoning.Text), true);
                     }
                     else
                     {
@@ -163,7 +164,7 @@ public static class HistoryFormatter
                 }
                 case TextContent text when !string.IsNullOrEmpty(text.Text):
                 {
-                    AddCard(blocks, state, HistoryBlockKind.Assistant, "assistant", TerminalText.Sanitize(text.Text));
+                    AddCard(blocks, state, HistoryBlockKind.Assistant, "assistant", TerminalText.Sanitize(text.Text), true);
                     break;
                 }
                 case ToolCallContent call:
@@ -171,7 +172,7 @@ public static class HistoryFormatter
                     var tool = TerminalText.Sanitize(call.ToolName);
                     var summary = TerminalText.Sanitize(ToolCallSummary.Describe(call));
                     state.Calls[call.CallId] = (tool, summary);
-                    AddCard(blocks, state, HistoryBlockKind.Tool, ToolHeader(tool, summary), null);
+                    AddCard(blocks, state, HistoryBlockKind.Tool, ToolHeader(tool, summary), null, false);
                     state.LastCallHeaderId = call.CallId;
                     state.AttachNextHeader = true;
                     break;
@@ -187,7 +188,7 @@ public static class HistoryFormatter
         if (state.LastCallHeaderId != content.CallId)
         {
             var (tool, summary) = state.Calls.TryGetValue(content.CallId, out var call) ? call : (TerminalText.Sanitize(content.ToolName), string.Empty);
-            AddCard(blocks, state, HistoryBlockKind.Tool, ToolHeader(tool, summary), null);
+            AddCard(blocks, state, HistoryBlockKind.Tool, ToolHeader(tool, summary), null, false);
         }
 
         state.LastCallHeaderId = null;
@@ -293,7 +294,7 @@ public static class HistoryFormatter
         return (exitCode, duration, string.Join("\n", lines.Skip(index)).TrimEnd('\n'));
     }
 
-    private static void AddCard(List<HistoryBlock> blocks, HistoryFormatState state, HistoryBlockKind kind, string header, string? body)
+    private static void AddCard(List<HistoryBlock> blocks, HistoryFormatState state, HistoryBlockKind kind, string header, string? body, bool markdown)
     {
         if (!state.AttachNextHeader)
         {
@@ -307,7 +308,7 @@ public static class HistoryFormatter
 
         if (!string.IsNullOrEmpty(body))
         {
-            blocks.Add(new HistoryBlock(kind, HistoryBlockRole.Body, body));
+            blocks.Add(new HistoryBlock(kind, HistoryBlockRole.Body, body, markdown));
         }
     }
 
@@ -319,14 +320,16 @@ public static class HistoryFormatter
         state.LastCallHeaderId = null;
     }
 
-    private static void AddLive(List<HistoryBlock> blocks, string header, string? body)
+    private static void AddLive(List<HistoryBlock> blocks, string header, string? body, bool markdownTail)
     {
         blocks.Add(new HistoryBlock(HistoryBlockKind.Live, HistoryBlockRole.Spacer, string.Empty));
         blocks.Add(new HistoryBlock(HistoryBlockKind.Live, HistoryBlockRole.Header, header));
 
-        if (!string.IsNullOrEmpty(body))
+        if (!string.IsNullOrWhiteSpace(body))
         {
-            blocks.Add(new HistoryBlock(HistoryBlockKind.Live, HistoryBlockRole.Body, body));
+            blocks.Add(markdownTail
+                ? new HistoryBlock(HistoryBlockKind.Live, HistoryBlockRole.Body, body, true, LiveTailLines)
+                : new HistoryBlock(HistoryBlockKind.Live, HistoryBlockRole.Body, body));
         }
     }
 
@@ -339,23 +342,5 @@ public static class HistoryFormatter
     {
         var index = text.IndexOf(marker, StringComparison.Ordinal);
         return index > 0 ? text[..index] : text;
-    }
-
-    /// <summary>
-    ///     Wraps only the paragraphs that can reach the last lines, so the breaks match wrapping the whole text.
-    /// </summary>
-    internal static string TailLines(string text, int width, int count)
-    {
-        var needed = (count + 1) * Math.Max(10, width);
-        var start = 0;
-
-        if (text.Length > needed)
-        {
-            start = text.LastIndexOfAny(LineBreaks, text.Length - needed) + 1;
-        }
-
-        var sanitized = TerminalText.Sanitize(start == 0 ? text : text[start..]);
-        var lines = TextWrap.Wrap(sanitized, width, 0);
-        return string.Join("\n", lines.Skip(Math.Max(0, lines.Count - count)));
     }
 }

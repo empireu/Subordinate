@@ -70,6 +70,7 @@ public sealed class MonitorController
         _showAll = showAll;
         _window.List.RowRender += (_, args) => args.RowAttribute = ListAttribute(args.Row);
         _window.DetailList.RowRender += (_, args) => args.RowAttribute = DetailAttribute(args.Row);
+        _window.DetailStyles = row => row >= 0 && row < _detailLineInfo.Count ? _detailLineInfo[row].Styles : null;
     }
 
     public bool DetailOpen => _detailOpen;
@@ -613,7 +614,7 @@ public sealed class MonitorController
     private static List<HistoryLine> FormatLiveLines(LiveSessionSnapshot? live, int width, DateTimeOffset now)
     {
         var lines = new List<HistoryLine>();
-        HistoryLayout.Append(HistoryFormatter.FormatLive(live, now, width), width, false, lines);
+        HistoryLayout.Append(HistoryFormatter.FormatLive(live, now), width, false, lines);
         return lines;
     }
 

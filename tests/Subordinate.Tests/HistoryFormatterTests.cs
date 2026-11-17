@@ -30,7 +30,7 @@ public class HistoryFormatterTests
             [
                 new HistoryBlock(HistoryBlockKind.Task, HistoryBlockRole.Spacer, string.Empty),
                 new HistoryBlock(HistoryBlockKind.Task, HistoryBlockRole.Header, "task"),
-                new HistoryBlock(HistoryBlockKind.Task, HistoryBlockRole.Body, "Do the task.")
+                new HistoryBlock(HistoryBlockKind.Task, HistoryBlockRole.Body, "Do the task.", true)
             ],
             HistoryFormatter.FormatMessage(task, state, false, false));
 
@@ -39,10 +39,10 @@ public class HistoryFormatterTests
 
         var expanded = HistoryFormatter.FormatMessage(reasoning, new HistoryFormatState(), true, false);
         Assert.Equal(new HistoryBlock(HistoryBlockKind.Thinking, HistoryBlockRole.Header, "thinking"), expanded[1]);
-        Assert.Equal(new HistoryBlock(HistoryBlockKind.Thinking, HistoryBlockRole.Body, "thinking hard"), expanded[2]);
+        Assert.Equal(new HistoryBlock(HistoryBlockKind.Thinking, HistoryBlockRole.Body, "thinking hard", true), expanded[2]);
 
         Assert.Equal(new HistoryBlock(HistoryBlockKind.Supervisor, HistoryBlockRole.Header, "supervisor"), HistoryFormatter.FormatMessage(supervisor, state, false, false)[1]);
-        Assert.Equal(new HistoryBlock(HistoryBlockKind.Assistant, HistoryBlockRole.Body, "done"), HistoryFormatter.FormatMessage(final, state, false, false)[^1]);
+        Assert.Equal(new HistoryBlock(HistoryBlockKind.Assistant, HistoryBlockRole.Body, "done", true), HistoryFormatter.FormatMessage(final, state, false, false)[^1]);
     }
 
     [Fact]
@@ -117,12 +117,14 @@ public class HistoryFormatterTests
             null,
             null);
 
-        var blocks = HistoryFormatter.FormatLive(reasoning, Now, 40);
+        var blocks = HistoryFormatter.FormatLive(reasoning, Now);
 
         Assert.Equal(new HistoryBlock(HistoryBlockKind.Live, HistoryBlockRole.Header, $"live  thinking {Units.FormatTokens(reasoningText.Length)} characters, 14s"), blocks[1]);
-        var lines = blocks[2].Text.Split('\n');
-        Assert.Equal(HistoryFormatter.LiveTailLines, lines.Length);
-        Assert.Equal("thought 20", lines[^1]);
+        var laidOut = new List<HistoryLine>();
+        HistoryLayout.Append(blocks, 40, false, laidOut);
+        var lines = laidOut.Where(line => line.Role == HistoryBlockRole.Body).Select(line => line.Text).ToList();
+        Assert.Equal(HistoryFormatter.LiveTailLines, lines.Count);
+        Assert.Equal("  thought 20", lines[^1]);
 
         var ended = new LiveSessionSnapshot(
             new MonitorSnapshot("ended", Now, 1, string.Empty, 0, string.Empty, 0, [], null, null, 0, null),
@@ -130,33 +132,25 @@ public class HistoryFormatterTests
             Now,
             "finished",
             null);
-        Assert.Empty(HistoryFormatter.FormatLive(ended, Now, 40));
+        Assert.Empty(HistoryFormatter.FormatLive(ended, Now));
     }
 
-    [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public void TheLiveTailMatchesWrappingTheWholeText(bool paragraphs)
+    [Fact]
+    public void PlainLayoutKeepsMarkdownReadableAsText()
     {
-        var random = new Random(42);
-        var words = new[] { "the", "model", "considers", "a", "reasonably", "long", "sentence", "about", "builds", "and", "tests" };
-        var builder = new System.Text.StringBuilder();
+        var blocks = HistoryFormatter.FormatMessage(SessionHarness.Text(ChatRole.Assistant, "## Result\n\nUse `make` and **check** it."), new HistoryFormatState(), false, false);
+        var plain = new List<HistoryLine>();
+        var colored = new List<HistoryLine>();
 
-        while (builder.Length < 30_000)
-        {
-            builder.Append(words[random.Next(words.Length)]);
-            builder.Append(paragraphs && random.Next(40) == 0 ? "\n\n" : " ");
-        }
+        HistoryLayout.Append(blocks, 40, true, plain);
+        HistoryLayout.Append(blocks, 40, false, colored);
 
-        var text = builder.ToString();
-
-        foreach (var width in new[] { 38, 78, 118 })
-        {
-            var all = TextWrap.Wrap(text, width, 0);
-            var expected = string.Join("\n", all.Skip(all.Count - HistoryFormatter.LiveTailLines));
-
-            Assert.Equal(expected, HistoryFormatter.TailLines(text, width, HistoryFormatter.LiveTailLines));
-        }
+        Assert.Equal(["  ## Result", string.Empty, "  Use `make` and check it."], plain.Where(line => line.Role == HistoryBlockRole.Body).Select(line => line.Text));
+        Assert.All(plain, line => Assert.Null(line.Styles));
+        var styled = colored.Where(line => line.Role == HistoryBlockRole.Body).ToList();
+        Assert.Equal(["  Result", string.Empty, "  Use make and check it."], styled.Select(line => line.Text));
+        Assert.Equal((char)MarkdownStyle.Heading, styled[0].Styles![2]);
+        Assert.Equal((char)MarkdownStyle.None, styled[0].Styles![0]);
     }
 
     [Fact]
