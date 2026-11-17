@@ -13,7 +13,7 @@ public class TuiPrintTests
         home.CreateSession("beta", SessionStates.Finished, DateTimeOffset.UtcNow.AddMinutes(-10));
         var writer = new StringWriter();
 
-        var exit = TuiPrint.Run(new TuiOptions { Print = true, Home = home.Home, Width = 120 }, writer);
+        var exit = TuiPrint.Run(new TuiOptions { Print = true, Home = home.Home, Width = 120, All = true }, writer);
 
         Assert.Equal(0, exit);
         var text = writer.ToString();

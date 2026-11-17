@@ -241,6 +241,8 @@ public sealed class SessionRecord
 
     public ErrorRecord? Error { get; set; }
 
+    public string? StoppedBy { get; set; }
+
     public TranscriptPointer Transcript { get; set; } = new();
 
     public InflightRecord? Inflight { get; set; }

@@ -184,6 +184,7 @@ internal static class SessionCommands
             }
 
             store.Save(paths, record);
+            StopRequest.Clear(paths);
         }
 
         return await LaunchAsync("resume", config, store, paths, commandLine.Has("wait"));
@@ -320,6 +321,11 @@ internal static class SessionCommands
         var envelope = Envelope.ForSession("status", record, runDirectory, writer => WriteProgress(writer, record, status), state);
         var builder = new StringBuilder();
         builder.Append(CultureInfo.InvariantCulture, $"Session \"{record.Name}\" ({record.Workdir}): {state}.\n");
+
+        if (state == SessionStates.Stopped && record.StoppedBy == StopRequesters.User)
+        {
+            builder.Append(StopRequest.UserStopNotice).Append('\n');
+        }
 
         if (status is { } element)
         {
@@ -710,7 +716,7 @@ internal static class SessionCommands
             return new CommandResult(Envelope.ForSession("stop", record, SessionResolver.CurrentRunDirectory(paths, record), null, state), $"Session \"{record.Name}\" is not running ({state}).");
         }
 
-        File.WriteAllText(paths.StopFile, DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture));
+        StopRequest.Write(paths, StopRequesters.Supervisor, "cli");
         return new CommandResult(Envelope.ForSession("stop", record, SessionResolver.CurrentRunDirectory(paths, record), writer => writer.WriteBoolean("stop_requested", true), state),
             $"Stop requested for \"{record.Name}\". The run stops at its next step and stays resumable. Use 'subordinate wait' to block until it has stopped.");
     }
@@ -925,6 +931,11 @@ internal static class SessionCommands
                 }
 
                 builder.Append("Decide with: subordinate resume --name \"").Append(record.Name).Append("\" --approve <id> --deny <id>:<reason>");
+                break;
+            }
+            case SessionStates.Stopped when record.StoppedBy == StopRequesters.User:
+            {
+                builder.Append(' ').Append(StopRequest.UserStopNotice);
                 break;
             }
             case SessionStates.LimitReached:

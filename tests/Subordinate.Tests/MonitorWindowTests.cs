@@ -131,29 +131,44 @@ public class MonitorWindowTests
     }
 
     [Fact]
-    public void AShowsAnOldFinishedSession()
+    public void TheDefaultListHidesFinishedAndStoppedSessionsUntilA()
     {
-        using var harness = new WindowHarness();
+        using var harness = new WindowHarness(false);
         var now = DateTimeOffset.UtcNow;
-        harness.Data.CreateSession("old-finished", SessionStates.Finished, now.AddDays(-2));
-        harness.Data.CreateSession("recent-finished", SessionStates.Finished, now.AddMinutes(-1));
+        harness.Data.CreateRunningSession("running-one", now.AddSeconds(-30));
+        harness.Data.CreateSession("approval-one", SessionStates.AwaitingApproval, now.AddMinutes(-1));
+        harness.Data.CreateSession("limit-one", SessionStates.LimitReached, now.AddDays(-2));
+        harness.Data.CreateSession("interrupted-one", SessionStates.Interrupted, now.AddDays(-2));
+        harness.Data.CreateSession("failed-one", SessionStates.Failed, now.AddDays(-2));
+        harness.Data.CreateSession("finished-one", SessionStates.Finished, now.AddMinutes(-1));
+        harness.Data.CreateSession("stopped-one", SessionStates.Stopped, now.AddMinutes(-1));
         harness.Refresh();
 
-        Assert.DoesNotContain("old-finished", harness.Screen);
+        var screen = harness.Screen;
+        Assert.Contains("running-one", screen);
+        Assert.Contains("approval-one", screen);
+        Assert.Contains("limit-one", screen);
+        Assert.Contains("interrupted-one", screen);
+        Assert.Contains("failed-one", screen);
+        Assert.DoesNotContain("finished-one", screen);
+        Assert.DoesNotContain("stopped-one", screen);
 
         harness.Key(Key.A);
 
-        Assert.Contains("old-finished", harness.Screen);
+        Assert.Contains("finished-one", harness.Screen);
+        Assert.Contains("stopped-one", harness.Screen);
     }
 
     [Fact]
-    public void TheAllOptionShowsAnOldFinishedSession()
+    public void TheAllOptionShowsFinishedAndStoppedSessions()
     {
         using var harness = new WindowHarness(true);
-        harness.Data.CreateSession("old-finished", SessionStates.Finished, DateTimeOffset.UtcNow.AddDays(-2));
+        harness.Data.CreateSession("finished-one", SessionStates.Finished, DateTimeOffset.UtcNow.AddMinutes(-1));
+        harness.Data.CreateSession("stopped-one", SessionStates.Stopped, DateTimeOffset.UtcNow.AddMinutes(-1));
         harness.Refresh();
 
-        Assert.Contains("old-finished", harness.Screen);
+        Assert.Contains("finished-one", harness.Screen);
+        Assert.Contains("stopped-one", harness.Screen);
     }
 
     [Fact]
@@ -404,7 +419,7 @@ public class MonitorWindowTests
         private readonly IApplication _app;
         private readonly SessionToken? _token;
 
-        public WindowHarness(bool showAll = false)
+        public WindowHarness(bool showAll = true)
         {
             Data = new TuiTestHome();
             Registry = new LiveSessionRegistry();

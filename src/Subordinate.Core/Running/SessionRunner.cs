@@ -74,6 +74,7 @@ public sealed class SessionRunner
     private RunLimits? _limits;
     private DateTimeOffset? _activeToolStartedAt;
     private string? _activeToolName;
+    private string? _stopRequestedBy;
 
     public SessionRunner(SessionStore store, SessionPaths paths, SessionRecord record, string runId, IChatProvider provider, ChatRequestOptions requestOptions, ICommandExecutor executor, IMonitorFeed? monitorFeed = null)
     {
@@ -142,8 +143,8 @@ public sealed class SessionRunner
         _stopwatch.Start();
         _limits = limits;
         _record.FinalText = null;
+        _record.StoppedBy = null;
         Directory.CreateDirectory(_runDirectory);
-        TryDelete(_paths.StopFile);
 
         using var stopSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         using var pollerSource = new CancellationTokenSource();
@@ -279,6 +280,7 @@ public sealed class SessionRunner
                 {
                     _context.InsertUserMessage(updates);
                     MarkDelivered(ledger, inflightCallIds);
+                    _record.QueuedMessage = null;
                     Persist();
                 }
             }
@@ -574,7 +576,6 @@ public sealed class SessionRunner
         if (_record.QueuedMessage != null)
         {
             builder.Append("\nMessage from the supervisor:\n").Append(_record.QueuedMessage).Append('\n');
-            _record.QueuedMessage = null;
         }
         else
         {
@@ -899,6 +900,12 @@ public sealed class SessionRunner
 
         _record.State = state;
         _record.Error = error;
+        _record.StoppedBy = state == SessionStates.Stopped ? _stopRequestedBy : null;
+
+        if (_record.StoppedBy == StopRequesters.User && _record.QueuedMessage?.Contains(StopRequest.UserStopAgentNote, StringComparison.Ordinal) != true)
+        {
+            _record.QueuedMessage = _record.QueuedMessage == null ? StopRequest.UserStopAgentNote : _record.QueuedMessage + "\n\n" + StopRequest.UserStopAgentNote;
+        }
 
         var finalText = _context?.ChatMessages.LastOrDefault();
         _record.FinalText = finalText is { Role: ChatRole.Assistant } && finalText.GetToolCalls().Count == 0 && state is SessionStates.Finished or SessionStates.AwaitingApproval
@@ -930,7 +937,7 @@ public sealed class SessionRunner
             SessionStates.Finished => "finished",
             SessionStates.AwaitingApproval => $"waiting for {_record.PendingCount} approval(s)",
             SessionStates.LimitReached => _lastActivity,
-            SessionStates.Stopped => "stopped",
+            SessionStates.Stopped => _record.StoppedBy == StopRequesters.User ? "stopped by the user" : "stopped",
             _ => error?.Message ?? state
         };
 
@@ -957,7 +964,9 @@ public sealed class SessionRunner
         return state switch
         {
             SessionStates.LimitReached => $"The run stopped at a limit ({_lastActivity}) before the subagent finished. Resume the session to continue.",
-            SessionStates.Stopped => "The run was stopped before the subagent finished. Resume the session to continue.",
+            SessionStates.Stopped => _record.StoppedBy == StopRequesters.User
+                ? StopRequest.UserStopNotice
+                : "The run was stopped before the subagent finished. Resume the session to continue.",
             SessionStates.Failed => $"The run failed: {error?.Message ?? "unknown error"}",
             _ => null
         };
@@ -1051,7 +1060,8 @@ public sealed class SessionRunner
 
             if (File.Exists(_paths.StopFile))
             {
-                _lastActivity = "stop requested";
+                _stopRequestedBy = StopRequest.ReadRequester(_paths);
+                _lastActivity = _stopRequestedBy == StopRequesters.User ? "stop requested by the user" : "stop requested";
                 await stopSource.CancelAsync();
                 return;
             }
@@ -1099,19 +1109,5 @@ public sealed class SessionRunner
     private static string Now()
     {
         return DateTime.Now.ToString("HH:mm:ss", CultureInfo.InvariantCulture);
-    }
-
-    private static void TryDelete(string path)
-    {
-        try
-        {
-            File.Delete(path);
-        }
-        catch (IOException)
-        {
-        }
-        catch (UnauthorizedAccessException)
-        {
-        }
     }
 }

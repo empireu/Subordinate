@@ -16,6 +16,8 @@ public sealed class MonitorController
     private const int HintTailFactor = 4;
     private const int MinimumHintTailCharacters = 256;
     private static readonly TimeSpan RegistryCleanupInterval = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan StopConfirmWindow = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan StopNoticeDuration = TimeSpan.FromSeconds(5);
 
     private readonly MonitorWindow _window;
     private readonly SessionCatalog _catalog;
@@ -51,6 +53,12 @@ public sealed class MonitorController
     private DateTimeOffset _lastRegistryCleanup = DateTimeOffset.MinValue;
     private string? _notice;
     private string? _historyNotice;
+    private string? _stopArmedDirectory;
+    private string? _stopArmedName;
+    private DateTimeOffset _stopArmedAt;
+    private string? _stopNotice;
+    private DateTimeOffset _stopNoticeUntil;
+    private bool _footerWarning;
 
     public MonitorController(
         MonitorWindow window,
@@ -88,7 +96,7 @@ public sealed class MonitorController
         if (rebuild)
         {
             _sessions.Clear();
-            _sessions.AddRange(SessionSelection.FilterAndSort(snapshot.Sessions, _showAll, now));
+            _sessions.AddRange(SessionSelection.FilterAndSort(snapshot.Sessions, _showAll));
 
             // The detail view hides the rows, and closing it forces a rebuild:
             if (!_detailOpen)
@@ -170,6 +178,13 @@ public sealed class MonitorController
 
     public void HandleKey(Key key)
     {
+        if (key == Key.X.WithCtrl)
+        {
+            HandleStopKey();
+            key.Handled = true;
+            return;
+        }
+
         if (key == Key.Esc)
         {
             if (_detailOpen)
@@ -239,6 +254,73 @@ public sealed class MonitorController
             Refresh();
             key.Handled = true;
         }
+    }
+
+    private void HandleStopKey()
+    {
+        var session = CurrentSession();
+        var now = DateTimeOffset.UtcNow;
+
+        if (session == null)
+        {
+            return;
+        }
+
+        if (session.DisplayState != SessionStates.Running)
+        {
+            _stopArmedDirectory = null;
+            ShowStopNotice($"session {session.Name} is not running", now);
+        }
+        else if (_stopArmedDirectory != null && string.Equals(_stopArmedDirectory, session.Directory, PlatformServices.Current.Paths.Comparison) && now - _stopArmedAt <= StopConfirmWindow)
+        {
+            _stopArmedDirectory = null;
+            RequestStop(session, now);
+        }
+        else
+        {
+            _stopArmedDirectory = session.Directory;
+            _stopArmedName = session.Name;
+            _stopArmedAt = now;
+        }
+
+        Refresh();
+    }
+
+    private void RequestStop(SessionSummary session, DateTimeOffset now)
+    {
+        try
+        {
+            StopRequest.Write(new SessionPaths(session.Directory), StopRequesters.User, "tui");
+            ShowStopNotice($"stop requested for session {session.Name}", now);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            ShowStopNotice($"could not request a stop for session {session.Name}: {ex.Message}", now);
+        }
+    }
+
+    private void ShowStopNotice(string notice, DateTimeOffset now)
+    {
+        _stopNotice = notice;
+        _stopNoticeUntil = now + StopNoticeDuration;
+    }
+
+    private SessionSummary? CurrentSession()
+    {
+        if (_detailOpen)
+        {
+            return FindOpenSession(_catalog.Snapshot);
+        }
+
+        var index = _window.List.SelectedItem ?? -1;
+        return index >= 0 && index < _sessions.Count ? _sessions[index] : null;
+    }
+
+    private SessionSummary? FindOpenSession(CatalogSnapshot snapshot)
+    {
+        return _selectedDirectory == null
+            ? null
+            : snapshot.Sessions.FirstOrDefault(candidate => string.Equals(candidate.Directory, _selectedDirectory, PlatformServices.Current.Paths.Comparison));
     }
 
     private void ClearHistory()
@@ -340,9 +422,7 @@ public sealed class MonitorController
 
     private void RefreshDetail(CatalogSnapshot snapshot, int width, DateTimeOffset now)
     {
-        var session = _selectedDirectory == null
-            ? null
-            : snapshot.Sessions.FirstOrDefault(candidate => string.Equals(candidate.Directory, _selectedDirectory, PlatformServices.Current.Paths.Comparison));
+        var session = FindOpenSession(snapshot);
 
         if (session == null)
         {
@@ -479,6 +559,15 @@ public sealed class MonitorController
         if (label.Text != text)
         {
             label.Text = text;
+        }
+    }
+
+    private void SetFooterWarning(bool warning)
+    {
+        if (_footerWarning != warning)
+        {
+            _footerWarning = warning;
+            _window.Footer.SetScheme(warning ? MonitorColors.Warning : MonitorColors.Bar);
         }
     }
 
@@ -647,15 +736,35 @@ public sealed class MonitorController
 
     private void UpdateFooter(CatalogSnapshot snapshot, IReadOnlyList<SessionSummary> sessions)
     {
+        var now = DateTimeOffset.UtcNow;
+
+        if (_stopArmedDirectory != null && (now - _stopArmedAt > StopConfirmWindow || !string.Equals(CurrentSession()?.Directory, _stopArmedDirectory, PlatformServices.Current.Paths.Comparison)))
+        {
+            _stopArmedDirectory = null;
+        }
+
+        if (_stopNotice != null && now > _stopNoticeUntil)
+        {
+            _stopNotice = null;
+        }
+
+        SetFooterWarning(_stopArmedDirectory != null);
+
+        if (_stopArmedDirectory != null)
+        {
+            SetTextIfChanged(_window.Footer, $"Press ctrl+x again to stop session {_stopArmedName}");
+            return;
+        }
+
         var running = snapshot.Sessions.Count(session => session.DisplayState == "running");
         var approval = snapshot.Sessions.Count(session => session.DisplayState == "approval");
         var input = snapshot.Sessions.Sum(session => session.SessionCounters.InputTokens);
         var output = snapshot.Sessions.Sum(session => session.SessionCounters.OutputTokens);
         var cached = snapshot.Sessions.Sum(session => session.SessionCounters.CachedInputTokens);
         var cachedPercent = input > 0 ? (int)Math.Round(cached * 100.0 / input, MidpointRounding.AwayFromZero) : 0;
-        var shownNotice = _detailOpen ? _historyNotice : _notice;
+        var shownNotice = _stopNotice ?? (_detailOpen ? _historyNotice : _notice);
         var notice = shownNotice != null ? shownNotice + " | " : string.Empty;
-        var keys = _detailOpen ? "esc back  r reasoning  o outputs  f follow  q back" : "enter open  a all  q quit";
+        var keys = _detailOpen ? "esc back  r reasoning  o outputs  f follow  ^x^x stop  q back" : $"enter open  a {(_showAll ? "hide done" : "show all")}  ^x^x stop  q quit";
         SetTextIfChanged(_window.Footer, $"{notice}{running} running, {approval} awaiting approval, {sessions.Count} shown of {snapshot.Sessions.Count} | in {Units.FormatTokens(input)} ({cachedPercent}% cached) out {Units.FormatTokens(output)} | live: {_server.Status} | {keys}");
     }
 }

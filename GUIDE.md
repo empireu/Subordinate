@@ -25,7 +25,7 @@ Every shell command and file write a subagent attempts is classified determinist
 2. Clone this repository.
 3. Open Claude Code/The Agent in the repository and say: "Read GUIDE.md and set up Subordinate for me, following Part 2."
 4. When the agent is done, try it in any project: "Have Subordinate review the changes in this branch from three angles", or "Have Subordinate write tests for this spec."
-5. To watch the subagents work, open a new terminal and run `subordinate-tui`. The setup puts it on your PATH. It lists every session, newest and running first, with a live hint of what each one is doing. Press Enter to open one and see its full history, with the reasoning streaming in at the bottom. Esc goes back, `q` quits from the list. Windows Terminal or any terminal with 24-bit color shows the intended colors.
+5. To watch the subagents work, open a new terminal and run `subordinate-tui`. The setup puts it on your PATH. It lists the sessions that are running or may need attention, running first, with a live hint of what each one is doing. Press `a` to include finished and stopped sessions. Press Enter to open one and see its full history, with the reasoning streaming in at the bottom. Esc goes back, `q` quits from the list. Press ctrl+x twice to stop a running session; the agent is told you stopped it and will not resume it until you ask. Windows Terminal or any terminal with 24-bit color shows the intended colors.
 
 ### Good to know
 
@@ -35,7 +35,7 @@ Every shell command and file write a subagent attempts is classified determinist
 - **Pending items that need you** are network access, writes outside the project, credential files, and dangerous commands such as `git push` or `kill`. The agent asks you before approving them.
 - **The classifier is a deterministic floor, not a sandbox.** It blocks what it can recognize. Do not point Subordinate at code you would not run yourself.
 - **Cost.** `subordinate usage --since 7d` shows tokens and runs by model and project.
-- **Watch sessions live.** `subordinate-tui` lists sessions and shows their history and streaming output. It is read-only; see [README.md](README.md#session-monitor).
+- **Watch sessions live.** `subordinate-tui` lists sessions and shows their history and streaming output. Apart from stopping a session, it is read-only; see [README.md](README.md#session-monitor).
 - The full command reference is in [README.md](README.md).
 
 ## Part 2: For Claude Code/The Agent
@@ -392,6 +392,7 @@ Exit code 0 means the command worked, whatever the session state. Read `state`:
 | `finished` | Final answer is in the summary. | Verify it, then report. |
 | `awaiting_approval` | Blocked calls listed in the summary. | Decide them (see below). |
 | `limit_reached`, `stopped`, `interrupted` | Ran out of turns or time, was stopped, or the worker died. | `resume` to continue; work so far is kept. |
+| `stopped`, summary says the user stopped it via the TUI | The user stopped it from the session monitor. | Do not resume it until the user tells you to. Tell the user and wait. |
 | `failed` | See `error.message`. | Fix the cause; do not retry blindly. |
 
 Non-zero exit codes are errors in the command itself, such as `unknown_session` (3), `session_exists` (4), `session_busy` (5), `bad_policy` (6), `bad_model` (9), `bad_approval` (10) or `state_conflict` (11). Read the message and fix the call instead of repeating it.
@@ -487,7 +488,7 @@ If the subagent keeps hitting the same kind of block, the policy was too narrow 
 ## Follow-ups and recovery
 
 - Send a follow-up instruction to a finished or waiting session with `resume --message "<text>"` or `--message-file`. Decisions and a message can go in the same `resume`.
-- `limit_reached`, `stopped` and `interrupted` sessions continue with a plain `resume`. Raise limits with `--max-turns N` or `--max-minutes M` when the task genuinely needs more.
+- `limit_reached`, `stopped` and `interrupted` sessions continue with a plain `resume`, except a session the user stopped via the TUI, which waits until the user asks you to resume it. Raise limits with `--max-turns N` or `--max-minutes M` when the task genuinely needs more.
 - `result --name <name> --output <file>` writes the final answer to a file.
 - `close --name <name>` drops the pending calls without running the model and marks the session finished. It does not produce a final answer, so check `final_answer` before treating its text as one.
 - `stop --name <name>` asks a running session to stop at its next step. It stays resumable.

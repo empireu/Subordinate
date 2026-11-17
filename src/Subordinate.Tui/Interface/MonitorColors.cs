@@ -37,6 +37,8 @@ public static class MonitorColors
 
     public static readonly Scheme Bar = new(new TerminalAttribute(ForegroundDark, BackgroundDark));
 
+    public static readonly Scheme Warning = new(new TerminalAttribute(Background, Red));
+
     public static readonly Scheme Rule = new(new TerminalAttribute(Comment, Background));
 
     private static readonly TerminalAttribute RunningText = new(Green, Background);

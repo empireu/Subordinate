@@ -100,10 +100,11 @@ internal static class TuiCommandLine
           enter   open the selected session
           esc     go back to the list, or quit from the list
           q       go back to the list, or quit from the list
-          a       show all sessions
+          a       show all sessions, or hide finished and stopped ones again
           r       show or hide reasoning in the detail view
           o       show or hide full tool outputs in the detail view
           f       follow the live history
+          ctrl+x  press twice within two seconds to stop the selected or open session
         """;
 
     public static (TuiOptions? Options, string? Error) Parse(IReadOnlyList<string> args)

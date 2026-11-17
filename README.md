@@ -90,16 +90,18 @@ The run counters are under `run`; the session totals are under `session_totals`.
 
 ## Session monitor
 
-`subordinate-tui` is a read-only terminal UI for watching sessions. It lists running and recent sessions with their state, model, elapsed time, turns, tokens, context size and a live activity hint. Enter opens a session and shows its stats header and full history, including streaming reasoning and text while the run is active. It never writes session files; the only file it creates is its own socket.
+`subordinate-tui` is a terminal UI for watching sessions. It lists running and recent sessions with their state, model, elapsed time, turns, tokens, context size and a live activity hint. Enter opens a session and shows its stats header and full history, including streaming reasoning and text while the run is active. It never writes session files. The only files it creates are its own socket and the stop request of a session you stop.
 
 ```
 subordinate-tui [--home DIR] [--all]
 subordinate-tui --print [--home DIR] [--all] [--session NAME [--workdir DIR]] [--width N] [--wait-seconds S]
 ```
 
-Keys: up, down, page up, page down, home and end move or scroll; enter opens; esc goes back or quits from the list; `q` goes back or quits; `a` toggles all sessions; `r` shows or hides reasoning; `o` shows or hides full tool outputs; `f` follows the live history.
+Keys: up, down, page up, page down, home and end move or scroll; enter opens; esc goes back or quits from the list; `q` goes back or quits; `a` toggles all sessions; `r` shows or hides reasoning; `o` shows or hides full tool outputs; `f` follows the live history; ctrl+x pressed twice within two seconds stops the selected or open session.
 
-The default list shows running and starting sessions, sessions awaiting approval, and sessions updated in the last 24 hours. `a` shows every session. Running sessions come first, then sessions awaiting approval, then the rest by update time.
+A session stopped from the monitor stays resumable, but `wait`, `status` and `result.md` tell the supervisor that the user stopped it and that it must not be resumed until the user says so. When it is resumed, the subagent is told that the user stopped the previous run.
+
+The default list shows sessions that are running or starting, awaiting approval, at a limit, interrupted or failed. Finished and stopped sessions are hidden. `a` shows every session. Running sessions come first, then sessions awaiting approval, then the rest by update time.
 
 `--print` writes the same content as plain text, without starting Terminal.Gui. It is meant for scripts and for checking the output without a terminal. `--wait-seconds` first starts the monitor feed for that many seconds, so live hints and streaming history appear in the output.
 

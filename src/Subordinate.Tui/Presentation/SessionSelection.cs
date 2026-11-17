@@ -4,16 +4,16 @@ namespace Subordinate.Tui.Presentation;
 
 public static class SessionSelection
 {
-    public static List<SessionSummary> FilterAndSort(IReadOnlyList<SessionSummary> sessions, bool all, DateTimeOffset now)
+    public static List<SessionSummary> FilterAndSort(IReadOnlyList<SessionSummary> sessions, bool all)
     {
-        var filtered = sessions.Where(session => all || IsVisible(session, now)).ToList();
+        var filtered = sessions.Where(session => all || IsVisible(session)).ToList();
         filtered.Sort(Compare);
         return filtered;
     }
 
-    private static bool IsVisible(SessionSummary session, DateTimeOffset now)
+    private static bool IsVisible(SessionSummary session)
     {
-        return session.DisplayState is "running" or "approval" || now - session.UpdatedAt <= TimeSpan.FromHours(24);
+        return session.DisplayState is "running" or "approval" or "limit" or "interrupted" or "failed";
     }
 
     private static int Compare(SessionSummary left, SessionSummary right)

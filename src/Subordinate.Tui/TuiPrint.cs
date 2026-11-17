@@ -58,7 +58,7 @@ internal static class TuiPrint
             var catalog = new SessionCatalog(home, directory => registry.IsConnected(directory));
             catalog.PollOnce();
             var now = DateTimeOffset.UtcNow;
-            var sessions = SessionSelection.FilterAndSort(catalog.Snapshot.Sessions, options.All, now);
+            var sessions = SessionSelection.FilterAndSort(catalog.Snapshot.Sessions, options.All);
 
             if (options.Session != null)
             {
