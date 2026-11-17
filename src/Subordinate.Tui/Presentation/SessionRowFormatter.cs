@@ -95,7 +95,7 @@ public static class SessionRowFormatter
 
         if (width >= 70)
         {
-            columns.Add(Pad(Cut(Units.FormatTokens(session.ContextTokens), ContextWidth), ContextWidth));
+            columns.Add(Pad(Cut(session.ContextTokens > 0 ? Units.FormatTokens(session.ContextTokens) : "-", ContextWidth), ContextWidth));
         }
 
         columns.Add(Pad(Cut(activity, ActivityWidth(width)), ActivityWidth(width)));
@@ -130,9 +130,9 @@ public static class SessionRowFormatter
 
     private static string TimeText(SessionSummary session, DateTimeOffset now)
     {
-        if (session.ElapsedSeconds.HasValue)
+        if (session.ElapsedSeconds.HasValue || session.CurrentRun != null)
         {
-            return Units.FormatDuration(session.ElapsedSeconds.Value);
+            return Units.FormatDuration(SessionTimes.RunSeconds(session, now));
         }
 
         return Units.FormatDuration(Math.Max(0, (now - session.UpdatedAt).TotalSeconds));

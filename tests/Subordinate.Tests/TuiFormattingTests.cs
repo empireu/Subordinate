@@ -144,7 +144,7 @@ public class TuiFormattingTests
             "approval",
             modelAlias: "glm",
             maxTurns: 50,
-            currentRun: CreateRun(5, 3, 1_000, 500, 340, Now.AddSeconds(-180)),
+            currentRun: CreateRun(5, 3, 1_000, 500, 340, Now.AddSeconds(-300), Now.AddSeconds(-180)),
             sessionCounters: new CountersRecord { ModelCalls = 5, ToolCalls = 3, InputTokens = 1_000, CachedInputTokens = 500, OutputTokens = 340 },
             pendingCount: 2,
             needsHumanCount: 1,
@@ -168,7 +168,7 @@ public class TuiFormattingTests
             Pad("approval", 11),
             Pad("approval-one", 20),
             Pad("glm", 14),
-            Pad("3m00s", 7),
+            Pad("2m00s", 7),
             Pad("5/50", 8),
             Pad("1.0k/340", 12),
             Pad("1.0k", 7),
@@ -178,7 +178,7 @@ public class TuiFormattingTests
             Pad("finished", 11),
             Pad("finished-one", 20),
             Pad("glm", 14),
-            Pad("12m00s", 7),
+            Pad("4m40s", 7),
             Pad("20/20", 8),
             Pad("10.0k/2.0k", 12),
             Pad("10.0k", 7),
@@ -283,12 +283,12 @@ public class TuiFormattingTests
 
         Assert.Equal(
             [
-                "review-parser  running  live  deepseek-high (deepseek-v4-1-flash-1017)  bash  policy readonly",
-                @"D:\repos\app  run 0002-20261117-101500 (resume)  pid 18324  last activity 2s ago",
-                "time    run 3m12s  session 14m05s",
-                "turns   12 of 100 (88 left)  tools 31  pending 1 (0 need a human)",
-                "tokens  in 182k (uncached 41.0k, cached 141k, 77% cached)  out 9.8k",
-                "context 23.4k of 128k [####................] 18%  last turn 12.3s, 1.1k out, 89 tok/s"
+                "review-parser  running  live",
+                "model    deepseek-high (deepseek-v4-1-flash-1017)  shell bash  policy readonly",
+                @"workdir  D:\repos\app  run 0002-20261117-101500 (resume)  pid 18324  last activity 2s ago",
+                "time     run 3m12s  session 14m05s  turns 12 of 100 (88 left)  tools 31  pending 1 (0 need a human)",
+                "tokens   in 182k (uncached 41.0k, cached 141k, 77% cached)  out 9.8k",
+                "context  23.4k of 128k [####................] 18%  last turn 12.3s, 1.1k out, 89 tok/s"
             ],
             lines);
     }
@@ -302,9 +302,29 @@ public class TuiFormattingTests
         var withoutWindow = DetailHeaderFormatter.Format(session, null, null, Now);
         var slowTurn = DetailHeaderFormatter.Format(session, live, 128_000, Now);
 
-        Assert.Equal("context 23.4k", withoutWindow[^1]);
+        Assert.Equal("context  23.4k", withoutWindow[^1]);
         Assert.EndsWith("last turn 0.4s, 100 out", slowTurn[^1]);
         Assert.DoesNotContain("tok/s", slowTurn[^1]);
+    }
+
+    [Fact]
+    public void AFinishedRunIsTimedToItsEndAndAnUnknownContextIsMarked()
+    {
+        var started = Now.AddDays(-2);
+        var session = CreateSession(
+            "old",
+            "finished",
+            currentRun: CreateRun(0, 0, 0, 0, 0, started, started.AddSeconds(151)),
+            updatedAt: started.AddSeconds(151),
+            sessionStartedAt: started);
+
+        var lines = DetailHeaderFormatter.Format(session, null, 128_000, Now);
+        var row = SessionRowFormatter.FormatRow(session, false, string.Empty, 0, 120, Now);
+
+        Assert.StartsWith("time     run 2m31s  session 2m31s", lines[3]);
+        Assert.Equal("context  not recorded yet", lines[5]);
+        Assert.Contains(" 2m31s ", row);
+        Assert.DoesNotContain("2d", row);
     }
 
     [Fact]

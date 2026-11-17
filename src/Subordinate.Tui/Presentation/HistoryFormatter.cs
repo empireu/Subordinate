@@ -1,3 +1,4 @@
+using System.Globalization;
 using KnowledgeSystem.Ai.Providers.Abstractions;
 using Subordinate.Core.Running;
 using Subordinate.Tui.Live;
@@ -13,15 +14,50 @@ public enum HistoryBlockKind
     Assistant,
     Tool,
     ToolResult,
+    ToolFailure,
     Warning,
     Live
 }
 
-public sealed record HistoryBlock(HistoryBlockKind Kind, string Text);
+public enum HistoryBlockRole
+{
+    Header,
+    Body,
+    Note,
+    Spacer
+}
+
+public sealed record HistoryBlock(HistoryBlockKind Kind, HistoryBlockRole Role, string Text);
+
+/// <summary>
+///     Carries what earlier messages established, so a tool result can be paired with its call.
+/// </summary>
+public sealed class HistoryFormatState
+{
+    internal Dictionary<string, (string Tool, string Summary)> Calls { get; } = new(StringComparer.Ordinal);
+
+    internal bool SeenUser { get; set; }
+
+    internal string? LastCallHeaderId { get; set; }
+
+    internal bool AttachNextHeader { get; set; }
+
+    public void Reset()
+    {
+        Calls.Clear();
+        SeenUser = false;
+        LastCallHeaderId = null;
+        AttachNextHeader = false;
+    }
+}
 
 public static class HistoryFormatter
 {
-    public static IReadOnlyList<HistoryBlock> FormatMessage(ChatMessage message, bool isFirstUser, bool showReasoning, bool expandOutputs)
+    public const int CollapsedOutputLines = 8;
+    public const int ExpandedOutputLines = 200;
+    public const int LiveTailLines = 12;
+
+    public static IReadOnlyList<HistoryBlock> FormatMessage(ChatMessage message, HistoryFormatState state, bool showReasoning, bool expandOutputs)
     {
         var blocks = new List<HistoryBlock>();
 
@@ -29,69 +65,26 @@ public static class HistoryFormatter
         {
             case ChatRole.System:
             {
-                var text = message.GetText();
-                blocks.Add(new HistoryBlock(HistoryBlockKind.System, $"[system] {text.Length} characters, hidden"));
+                AddNote(blocks, state, HistoryBlockKind.System, $"system prompt, {message.GetText().Length} characters, hidden");
                 break;
             }
             case ChatRole.User:
             {
-                var text = TerminalText.Sanitize(message.GetText());
-                blocks.Add(new HistoryBlock(isFirstUser ? HistoryBlockKind.Task : HistoryBlockKind.Supervisor, (isFirstUser ? "[task]" : "[supervisor]") + "\n" + text));
+                var isTask = !state.SeenUser;
+                state.SeenUser = true;
+                AddCard(blocks, state, isTask ? HistoryBlockKind.Task : HistoryBlockKind.Supervisor, isTask ? "task" : "supervisor", TerminalText.Sanitize(message.GetText()));
                 break;
             }
             case ChatRole.Assistant:
             {
-                foreach (var content in message.Contents)
-                {
-                    switch (content)
-                    {
-                        case ReasoningContent reasoning when !string.IsNullOrEmpty(reasoning.Text):
-                        {
-                            if (showReasoning)
-                            {
-                                blocks.Add(new HistoryBlock(HistoryBlockKind.Thinking, "[thinking]\n" + TerminalText.Sanitize(reasoning.Text)));
-                            }
-                            else
-                            {
-                                blocks.Add(new HistoryBlock(HistoryBlockKind.Thinking, $"[thinking] {reasoning.Text.Length} characters (r to show)"));
-                            }
-
-                            break;
-                        }
-                        case TextContent text when !string.IsNullOrEmpty(text.Text):
-                        {
-                            blocks.Add(new HistoryBlock(HistoryBlockKind.Assistant, "[assistant]\n" + TerminalText.Sanitize(text.Text)));
-                            break;
-                        }
-                        case ToolCallContent call:
-                        {
-                            var summary = TerminalText.Sanitize(ToolCallSummary.Describe(call));
-                            blocks.Add(new HistoryBlock(HistoryBlockKind.Tool, $"[{TerminalText.Sanitize(call.ToolName)}] {summary}"));
-                            break;
-                        }
-                    }
-                }
-
+                FormatAssistant(message, state, showReasoning, blocks);
                 break;
             }
             case ChatRole.Tool:
             {
                 foreach (var content in message.Contents.OfType<ToolResultContent>())
                 {
-                    var output = TerminalText.Sanitize(content.Output);
-                    var lines = output.Split('\n');
-                    var limit = expandOutputs ? 200 : 8;
-                    var text = string.Join("\n", lines.Take(limit));
-
-                    if (lines.Length > limit)
-                    {
-                        text += $"\n... {lines.Length - limit} more lines";
-                    }
-
-                    var kind = output.StartsWith("PENDING APPROVAL", StringComparison.Ordinal) || output.StartsWith("DENIED", StringComparison.Ordinal)
-                        ? HistoryBlockKind.Warning
-                        : HistoryBlockKind.ToolResult;
-                    blocks.Add(new HistoryBlock(kind, text));
+                    FormatToolResult(content, state, expandOutputs, blocks);
                 }
 
                 break;
@@ -109,6 +102,7 @@ public static class HistoryFormatter
         }
 
         var state = live.State;
+        var bodyWidth = Math.Max(1, width - HistoryLayout.BodyIndent);
         var blocks = new List<HistoryBlock>();
 
         switch (state.Phase)
@@ -116,35 +110,234 @@ public static class HistoryFormatter
             case "reasoning":
             {
                 var duration = Units.FormatDuration((now - state.PhaseStartedAt).TotalSeconds);
-                var header = $"[live] thinking {Units.FormatTokens(state.ReasoningCharacters)} characters, {duration}";
-                blocks.Add(new HistoryBlock(HistoryBlockKind.Live, header + "\n" + TailLines(state.Reasoning, width, 12)));
+                AddLive(blocks, $"live  thinking {Units.FormatTokens(state.ReasoningCharacters)} characters, {duration}", TailLines(state.Reasoning, bodyWidth, LiveTailLines));
                 break;
             }
             case "answering":
             {
-                blocks.Add(new HistoryBlock(HistoryBlockKind.Live, "[live] writing\n" + TailLines(state.Text, width, 12)));
+                AddLive(blocks, "live  writing", TailLines(state.Text, bodyWidth, LiveTailLines));
                 break;
             }
             case "running_tools" when state.ActiveTool != null:
             {
                 var duration = Units.FormatDuration((now - state.ActiveTool.StartedAt).TotalSeconds);
-                blocks.Add(new HistoryBlock(HistoryBlockKind.Live, $"[live] running {TerminalText.Sanitize(state.ActiveTool.Tool)} {duration}: {TerminalText.Sanitize(state.ActiveTool.Summary)}"));
+                AddLive(blocks, $"live  running {TerminalText.Sanitize(state.ActiveTool.Tool)} {duration}", TerminalText.Sanitize(state.ActiveTool.Summary));
                 break;
             }
             case "waiting_for_model":
             {
                 var duration = Units.FormatDuration((now - state.PhaseStartedAt).TotalSeconds);
-                blocks.Add(new HistoryBlock(HistoryBlockKind.Live, $"[live] waiting for model {duration}"));
+                AddLive(blocks, $"live  waiting for the model {duration}", null);
                 break;
             }
             case "starting":
             {
-                blocks.Add(new HistoryBlock(HistoryBlockKind.Live, "[live] starting"));
+                AddLive(blocks, "live  starting", null);
                 break;
             }
         }
 
         return blocks;
+    }
+
+    private static void FormatAssistant(ChatMessage message, HistoryFormatState state, bool showReasoning, List<HistoryBlock> blocks)
+    {
+        foreach (var content in message.Contents)
+        {
+            switch (content)
+            {
+                case ReasoningContent reasoning when !string.IsNullOrEmpty(reasoning.Text):
+                {
+                    if (showReasoning)
+                    {
+                        AddCard(blocks, state, HistoryBlockKind.Thinking, "thinking", TerminalText.Sanitize(reasoning.Text));
+                    }
+                    else
+                    {
+                        AddNote(blocks, state, HistoryBlockKind.Thinking, $"thinking, {reasoning.Text.Length} characters (r to show)");
+                        state.AttachNextHeader = true;
+                    }
+
+                    break;
+                }
+                case TextContent text when !string.IsNullOrEmpty(text.Text):
+                {
+                    AddCard(blocks, state, HistoryBlockKind.Assistant, "assistant", TerminalText.Sanitize(text.Text));
+                    break;
+                }
+                case ToolCallContent call:
+                {
+                    var tool = TerminalText.Sanitize(call.ToolName);
+                    var summary = TerminalText.Sanitize(ToolCallSummary.Describe(call));
+                    state.Calls[call.CallId] = (tool, summary);
+                    AddCard(blocks, state, HistoryBlockKind.Tool, ToolHeader(tool, summary), null);
+                    state.LastCallHeaderId = call.CallId;
+                    state.AttachNextHeader = true;
+                    break;
+                }
+            }
+        }
+
+        state.AttachNextHeader = false;
+    }
+
+    private static void FormatToolResult(ToolResultContent content, HistoryFormatState state, bool expandOutputs, List<HistoryBlock> blocks)
+    {
+        if (state.LastCallHeaderId != content.CallId)
+        {
+            var (tool, summary) = state.Calls.TryGetValue(content.CallId, out var call) ? call : (TerminalText.Sanitize(content.ToolName), string.Empty);
+            AddCard(blocks, state, HistoryBlockKind.Tool, ToolHeader(tool, summary), null);
+        }
+
+        state.LastCallHeaderId = null;
+        var output = TerminalText.Sanitize(content.Output);
+
+        if (output.StartsWith("PENDING APPROVAL", StringComparison.Ordinal))
+        {
+            blocks.Add(new HistoryBlock(HistoryBlockKind.Warning, HistoryBlockRole.Note, CutAt(output, " The supervisor will decide")));
+            return;
+        }
+
+        if (output.StartsWith("DENIED", StringComparison.Ordinal))
+        {
+            blocks.Add(new HistoryBlock(HistoryBlockKind.Warning, HistoryBlockRole.Note, CutAt(output, " Do not retry")));
+            return;
+        }
+
+        string? timeout = null;
+
+        if (output.StartsWith("The command timed out", StringComparison.Ordinal))
+        {
+            var newline = output.IndexOf('\n');
+            timeout = newline < 0 ? output : output[..newline];
+            output = newline < 0 ? string.Empty : output[(newline + 1)..];
+        }
+
+        var parsed = ParseShellOutput(output);
+        var failed = content.IsError || timeout != null || parsed.ExitCode is not (null or 0);
+
+        if (timeout != null || parsed.ExitCode.HasValue || parsed.Duration != null || content.IsError)
+        {
+            var status = timeout ?? (failed ? "failed" : "ok");
+
+            if (parsed.ExitCode.HasValue)
+            {
+                status += $"  exit {parsed.ExitCode.Value.ToString(CultureInfo.InvariantCulture)}";
+            }
+
+            if (parsed.Duration != null)
+            {
+                status += $"  {parsed.Duration}s";
+            }
+
+            if (parsed.Body.Length == 0)
+            {
+                status += "  no output";
+            }
+
+            blocks.Add(new HistoryBlock(failed ? HistoryBlockKind.ToolFailure : HistoryBlockKind.ToolResult, HistoryBlockRole.Note, status));
+        }
+        else if (parsed.Body.Length == 0)
+        {
+            blocks.Add(new HistoryBlock(HistoryBlockKind.ToolResult, HistoryBlockRole.Note, "no output"));
+        }
+
+        if (parsed.Body.Length == 0)
+        {
+            return;
+        }
+
+        var lines = parsed.Body.Split('\n');
+        var limit = expandOutputs ? ExpandedOutputLines : CollapsedOutputLines;
+        var text = string.Join("\n", lines.Take(limit));
+
+        if (lines.Length > limit)
+        {
+            text += $"\n... {lines.Length - limit} more lines";
+        }
+
+        blocks.Add(new HistoryBlock(HistoryBlockKind.ToolResult, HistoryBlockRole.Body, text));
+    }
+
+    private static (int? ExitCode, string? Duration, string Body) ParseShellOutput(string output)
+    {
+        var lines = output.Split('\n');
+        var index = 0;
+        int? exitCode = null;
+        string? duration = null;
+
+        if (index < lines.Length && lines[index].StartsWith("exit_code: ", StringComparison.Ordinal)
+            && int.TryParse(lines[index]["exit_code: ".Length..], NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var code))
+        {
+            exitCode = code;
+            index++;
+        }
+
+        if (index < lines.Length && lines[index].StartsWith("duration_seconds: ", StringComparison.Ordinal))
+        {
+            duration = lines[index]["duration_seconds: ".Length..].Trim();
+            index++;
+        }
+
+        if (exitCode == null && duration == null)
+        {
+            return (null, null, output.TrimEnd('\n'));
+        }
+
+        if (index < lines.Length && lines[index] == "stdout:")
+        {
+            index++;
+        }
+
+        return (exitCode, duration, string.Join("\n", lines.Skip(index)).TrimEnd('\n'));
+    }
+
+    private static void AddCard(List<HistoryBlock> blocks, HistoryFormatState state, HistoryBlockKind kind, string header, string? body)
+    {
+        if (!state.AttachNextHeader)
+        {
+            blocks.Add(new HistoryBlock(kind, HistoryBlockRole.Spacer, string.Empty));
+        }
+
+        state.AttachNextHeader = false;
+        state.LastCallHeaderId = null;
+        blocks.Add(new HistoryBlock(kind, HistoryBlockRole.Header, header));
+        body = body?.TrimEnd();
+
+        if (!string.IsNullOrEmpty(body))
+        {
+            blocks.Add(new HistoryBlock(kind, HistoryBlockRole.Body, body));
+        }
+    }
+
+    private static void AddNote(List<HistoryBlock> blocks, HistoryFormatState state, HistoryBlockKind kind, string text)
+    {
+        blocks.Add(new HistoryBlock(kind, HistoryBlockRole.Spacer, string.Empty));
+        blocks.Add(new HistoryBlock(kind, HistoryBlockRole.Note, text));
+        state.AttachNextHeader = false;
+        state.LastCallHeaderId = null;
+    }
+
+    private static void AddLive(List<HistoryBlock> blocks, string header, string? body)
+    {
+        blocks.Add(new HistoryBlock(HistoryBlockKind.Live, HistoryBlockRole.Spacer, string.Empty));
+        blocks.Add(new HistoryBlock(HistoryBlockKind.Live, HistoryBlockRole.Header, header));
+
+        if (!string.IsNullOrEmpty(body))
+        {
+            blocks.Add(new HistoryBlock(HistoryBlockKind.Live, HistoryBlockRole.Body, body));
+        }
+    }
+
+    private static string ToolHeader(string tool, string summary)
+    {
+        return summary.Length == 0 ? tool : $"{tool}  {summary}";
+    }
+
+    private static string CutAt(string text, string marker)
+    {
+        var index = text.IndexOf(marker, StringComparison.Ordinal);
+        return index > 0 ? text[..index] : text;
     }
 
     private static string TailLines(string text, int width, int count)

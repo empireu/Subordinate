@@ -156,7 +156,7 @@ try {
 
     $finalText = $finalOutput -join "`n"
 
-    if ($waitExit -eq 0 -and $finalExit -eq 0 -and $finalText.Contains("[assistant]") -and $finalText -match "live-tui\s+finished") {
+    if ($waitExit -eq 0 -and $finalExit -eq 0 -and $finalText.Contains("-- assistant") -and $finalText -match "live-tui\s+finished") {
         Write-Result "LIVE PASS history"
     }
     else {

@@ -41,33 +41,19 @@ public static class PrintRenderer
             builder.Append(line).Append('\n');
         }
 
-        builder.Append('\n');
-        var seenUser = false;
+        var state = new HistoryFormatState();
+        var lines = new List<HistoryLine>();
 
         foreach (var message in messages)
         {
-            var isFirstUser = message.Role == ChatRole.User && !seenUser;
-
-            if (message.Role == ChatRole.User)
-            {
-                seenUser = true;
-            }
-
-            foreach (var block in HistoryFormatter.FormatMessage(message, isFirstUser, true, true))
-            {
-                foreach (var line in TextWrap.Wrap(block.Text, width, 0))
-                {
-                    builder.Append(line).Append('\n');
-                }
-            }
+            HistoryLayout.Append(HistoryFormatter.FormatMessage(message, state, true, true), width, true, lines);
         }
 
-        foreach (var block in HistoryFormatter.FormatLive(live, now, width))
+        HistoryLayout.Append(HistoryFormatter.FormatLive(live, now, width), width, true, lines);
+
+        foreach (var line in lines)
         {
-            foreach (var line in TextWrap.Wrap(block.Text, width, 0))
-            {
-                builder.Append(line).Append('\n');
-            }
+            builder.Append(line.Text).Append('\n');
         }
 
         return builder.ToString();

@@ -206,6 +206,55 @@ public class MonitorWindowTests
     }
 
     [Fact]
+    public void ScrollingTheViewAwayFromTheEndIsNotUndone()
+    {
+        using var harness = new WindowHarness();
+        var task = string.Join("\n", Enumerable.Range(1, 80).Select(index => "task line " + index));
+        var paths = harness.Data.CreateSession("wheel", SessionStates.Finished, DateTimeOffset.UtcNow.AddMinutes(-1), task);
+        harness.Refresh();
+        harness.OpenFirst();
+        harness.WaitForScreen(screen => screen.Contains("task line 80", StringComparison.Ordinal), "The end of the task should be visible");
+        var list = harness.View.DetailList;
+
+        list.Viewport = list.Viewport with { Y = 0 };
+        harness.Refresh();
+        harness.Refresh();
+
+        Assert.Equal(0, list.Viewport.Y);
+        Assert.Contains("task line 1", harness.Screen);
+
+        harness.Data.AppendMessages(paths, Assistant("Arrived while scrolled up."));
+        harness.Refresh();
+        Thread.Sleep(200);
+        harness.Refresh();
+        Assert.Equal(0, list.Viewport.Y);
+
+        list.Viewport = list.Viewport with { Y = harness.View.DetailLines.Count - list.Viewport.Height };
+        harness.Data.AppendMessages(paths, Assistant("Arrived at the bottom."));
+        harness.WaitForScreen(screen => screen.Contains("Arrived at the bottom.", StringComparison.Ordinal), "Following should resume at the end");
+    }
+
+    [Fact]
+    public void FJumpsBackToTheEndAndKeepsFollowing()
+    {
+        using var harness = new WindowHarness();
+        var task = string.Join("\n", Enumerable.Range(1, 80).Select(index => "task line " + index));
+        var paths = harness.Data.CreateSession("follow-key", SessionStates.Finished, DateTimeOffset.UtcNow.AddMinutes(-1), task);
+        harness.Refresh();
+        harness.OpenFirst();
+        harness.WaitForScreen(screen => screen.Contains("task line 80", StringComparison.Ordinal), "The end of the task should be visible");
+
+        harness.Key(Key.Home);
+        harness.Refresh();
+        Assert.Contains("task line 1", harness.Screen);
+
+        harness.Key(Key.F);
+        harness.Data.AppendMessages(paths, Assistant("After f."));
+        harness.WaitForScreen(screen => screen.Contains("After f.", StringComparison.Ordinal), "Following should resume after f");
+        Assert.Equal(harness.View.DetailLines.Count - 1, harness.View.DetailList.SelectedItem);
+    }
+
+    [Fact]
     public void ResizingToATinyTerminalDoesNotThrow()
     {
         using var harness = new WindowHarness();

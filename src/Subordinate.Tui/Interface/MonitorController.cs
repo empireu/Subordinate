@@ -6,21 +6,13 @@ using Subordinate.Tui.Live;
 using Subordinate.Tui.Presentation;
 using Terminal.Gui.Drawing;
 using Terminal.Gui.Input;
+using Terminal.Gui.Views;
 using TerminalAttribute = Terminal.Gui.Drawing.Attribute;
 
 namespace Subordinate.Tui.Interface;
 
 public sealed class MonitorController
 {
-    private static readonly TerminalAttribute RunningAttribute = new(ColorName16.BrightGreen, ColorName16.Black);
-    private static readonly TerminalAttribute ApprovalAttribute = new(ColorName16.BrightYellow, ColorName16.Black);
-    private static readonly TerminalAttribute FailureAttribute = new(ColorName16.BrightRed, ColorName16.Black);
-    private static readonly TerminalAttribute DimAttribute = new(ColorName16.DarkGray, ColorName16.Black);
-    private static readonly TerminalAttribute GrayAttribute = new(ColorName16.Gray, ColorName16.Black);
-    private static readonly TerminalAttribute ToolAttribute = new(ColorName16.BrightBlue, ColorName16.Black);
-    private static readonly TerminalAttribute WarningAttribute = new(ColorName16.BrightYellow, ColorName16.Black);
-    private static readonly TerminalAttribute LiveAttribute = new(ColorName16.BrightCyan, ColorName16.Black);
-
     private readonly MonitorWindow _window;
     private readonly SessionCatalog _catalog;
     private readonly LiveSessionRegistry _registry;
@@ -30,7 +22,8 @@ public sealed class MonitorController
     private readonly List<SessionSummary> _sessions = [];
     private readonly List<ChatMessage> _messages = [];
     private readonly List<HistoryBlock> _blocks = [];
-    private readonly List<HistoryBlockKind> _detailKinds = [];
+    private readonly List<HistoryLine> _detailLineInfo = [];
+    private readonly HistoryFormatState _formatState = new();
 
     private string? _selectedDirectory;
     private string? _selectedName;
@@ -39,11 +32,12 @@ public sealed class MonitorController
     private bool _showReasoning;
     private bool _expandOutputs;
     private bool _follow = true;
-    private bool _seenUser;
     private bool _historyDirty;
+    private string? _titleState;
     private int _spinner;
     private int _lastWidth = -1;
     private int _liveLineCount;
+    private int _followSelection = -1;
     private long _catalogVersion = -1;
     private long _registryVersion = -1;
     private long _historyVersion = -1;
@@ -130,11 +124,13 @@ public sealed class MonitorController
         _history.Open(session.Directory);
         _messages.Clear();
         _blocks.Clear();
-        _seenUser = false;
+        _formatState.Reset();
         _historyVersion = -1;
         _lastWidth = -1;
         _historyDirty = true;
         _follow = true;
+        _followSelection = -1;
+        _titleState = null;
         _notice = null;
         _window.ShowDetail();
         Refresh();
@@ -146,12 +142,12 @@ public sealed class MonitorController
         _history.Close();
         _messages.Clear();
         _blocks.Clear();
-        _seenUser = false;
+        _formatState.Reset();
         _historyVersion = -1;
         _lastWidth = -1;
         _liveLineCount = 0;
         _window.DetailLines.Clear();
-        _detailKinds.Clear();
+        _detailLineInfo.Clear();
         _window.ShowList();
         _notice = notice;
         _catalogVersion = -1;
@@ -218,6 +214,13 @@ public sealed class MonitorController
         }
         else if (key == Key.F)
         {
+            if (_window.DetailLines.Count > 0)
+            {
+                _followSelection = _window.DetailLines.Count - 1;
+                _window.DetailList.SelectedItem = _followSelection;
+                _window.DetailList.EnsureSelectedItemVisible();
+            }
+
             _follow = true;
             Refresh();
             key.Handled = true;
@@ -299,7 +302,7 @@ public sealed class MonitorController
         }
         finally
         {
-            _window.List.ResumeSuspendCollectionChangedEvent();
+            ResumeList(_window.List);
         }
     }
 
@@ -319,10 +322,10 @@ public sealed class MonitorController
 
         if (_window.DetailLines.Count > 0 && _window.DetailList.SelectedItem is int selectedLine)
         {
-            _follow = selectedLine >= _window.DetailLines.Count - 1;
+            _follow = IsFollowing(selectedLine);
         }
 
-        _window.DetailHeader.Text = string.Join("\n", DetailHeaderFormatter.Format(session, live, _contextWindowLookup(session.ModelAlias), now));
+        UpdateDetailHeader(session, live, now);
         _history.RequestRefresh(live?.State.TranscriptCount);
         var history = _history.TakeChanges();
 
@@ -332,7 +335,7 @@ public sealed class MonitorController
             {
                 _messages.Clear();
                 _blocks.Clear();
-                _seenUser = false;
+                _formatState.Reset();
             }
 
             if (history.NewMessages.Count > 0)
@@ -358,32 +361,73 @@ public sealed class MonitorController
 
         if (_follow && _window.DetailLines.Count > 0)
         {
-            _window.DetailList.SelectedItem = _window.DetailLines.Count - 1;
+            _followSelection = _window.DetailLines.Count - 1;
+            _window.DetailList.SelectedItem = _followSelection;
             _window.DetailList.EnsureSelectedItemVisible();
         }
 
         UpdateFooter(snapshot, _sessions);
     }
 
+    /// <summary>
+    ///     Follows only while the last line is on screen. The mouse wheel scrolls without moving the selection, so while the selection is still the one follow mode set, the scroll position alone decides.
+    /// </summary>
+    private bool IsFollowing(int selectedLine)
+    {
+        var viewport = _window.DetailList.Viewport;
+        var count = _window.DetailLines.Count;
+        var atBottom = viewport.Height <= 0 || viewport.Y + viewport.Height >= count;
+
+        if (selectedLine != _followSelection)
+        {
+            return atBottom && selectedLine >= count - 1;
+        }
+
+        return atBottom;
+    }
+
+    private void UpdateDetailHeader(SessionSummary session, LiveSessionSnapshot? live, DateTimeOffset now)
+    {
+        var lines = DetailHeaderFormatter.Format(session, live, _contextWindowLookup(session.ModelAlias), now);
+        SetTextIfChanged(_window.DetailTitle, " " + lines[0]);
+        SetTextIfChanged(_window.DetailHeader, string.Join("\n", lines.Skip(1)));
+
+        if (_titleState != session.DisplayState)
+        {
+            _window.DetailTitle.SetScheme(MonitorColors.ForTitle(session.DisplayState));
+            _titleState = session.DisplayState;
+        }
+    }
+
+    private static void ResumeList(ListView list)
+    {
+        list.ResumeSuspendCollectionChangedEvent();
+
+        // Resuming does not replay the suppressed changes, so the scrollable size is updated here:
+        list.SetContentSize(new System.Drawing.Size(Math.Max(1, list.Viewport.Width), list.Source?.Count ?? 0));
+        list.SetNeedsDraw();
+    }
+
+    private static void SetTextIfChanged(Label label, string text)
+    {
+        if (label.Text != text)
+        {
+            label.Text = text;
+        }
+    }
+
     private void AppendBlocks(IReadOnlyList<ChatMessage> messages)
     {
         foreach (var message in messages)
         {
-            var isFirstUser = message.Role == ChatRole.User && !_seenUser;
-
-            if (message.Role == ChatRole.User)
-            {
-                _seenUser = true;
-            }
-
-            _blocks.AddRange(HistoryFormatter.FormatMessage(message, isFirstUser, _showReasoning, _expandOutputs));
+            _blocks.AddRange(HistoryFormatter.FormatMessage(message, _formatState, _showReasoning, _expandOutputs));
         }
     }
 
     private void ReformatBlocks()
     {
         _blocks.Clear();
-        _seenUser = false;
+        _formatState.Reset();
         AppendBlocks(_messages);
         _historyDirty = true;
         Refresh();
@@ -391,29 +435,11 @@ public sealed class MonitorController
 
     private void RebuildDetailLines(LiveSessionSnapshot? live, int width, DateTimeOffset now)
     {
-        var lines = new List<string>();
-        var kinds = new List<HistoryBlockKind>();
-
-        foreach (var block in _blocks)
-        {
-            var wrapped = TextWrap.Wrap(block.Text, width, 0);
-            lines.AddRange(wrapped);
-
-            foreach (var _ in wrapped)
-            {
-                kinds.Add(block.Kind);
-            }
-        }
-
+        var lines = new List<HistoryLine>();
+        HistoryLayout.Append(_blocks, width, false, lines);
         var liveLines = FormatLiveLines(live, width, now);
         lines.AddRange(liveLines);
-
-        foreach (var _ in liveLines)
-        {
-            kinds.Add(HistoryBlockKind.Live);
-        }
-
-        ReplaceDetailLines(lines, kinds);
+        ReplaceDetailLines(lines);
         _liveLineCount = liveLines.Count;
     }
 
@@ -429,28 +455,24 @@ public sealed class MonitorController
             for (var index = 0; index < remove; index++)
             {
                 _window.DetailLines.RemoveAt(_window.DetailLines.Count - 1);
-            }
-
-            for (var index = 0; index < remove; index++)
-            {
-                _detailKinds.RemoveAt(_detailKinds.Count - 1);
+                _detailLineInfo.RemoveAt(_detailLineInfo.Count - 1);
             }
 
             foreach (var line in liveLines)
             {
-                _window.DetailLines.Add(line);
-                _detailKinds.Add(HistoryBlockKind.Live);
+                _window.DetailLines.Add(line.Text);
+                _detailLineInfo.Add(line);
             }
         }
         finally
         {
-            _window.DetailList.ResumeSuspendCollectionChangedEvent();
+            ResumeList(_window.DetailList);
         }
 
         _liveLineCount = liveLines.Count;
     }
 
-    private void ReplaceDetailLines(IReadOnlyList<string> lines, IReadOnlyList<HistoryBlockKind> kinds)
+    private void ReplaceDetailLines(IReadOnlyList<HistoryLine> lines)
     {
         _window.DetailList.SuspendCollectionChangedEvent();
 
@@ -461,79 +483,62 @@ public sealed class MonitorController
                 _window.DetailLines.RemoveAt(_window.DetailLines.Count - 1);
             }
 
-            while (_detailKinds.Count > kinds.Count)
-            {
-                _detailKinds.RemoveAt(_detailKinds.Count - 1);
-            }
-
             for (var index = 0; index < lines.Count; index++)
             {
                 if (index < _window.DetailLines.Count)
                 {
-                    if (_window.DetailLines[index] != lines[index])
+                    if (_window.DetailLines[index] != lines[index].Text)
                     {
-                        _window.DetailLines[index] = lines[index];
+                        _window.DetailLines[index] = lines[index].Text;
                     }
                 }
                 else
                 {
-                    _window.DetailLines.Add(lines[index]);
+                    _window.DetailLines.Add(lines[index].Text);
                 }
             }
 
-            _detailKinds.Clear();
-            _detailKinds.AddRange(kinds);
+            _detailLineInfo.Clear();
+            _detailLineInfo.AddRange(lines);
         }
         finally
         {
-            _window.DetailList.ResumeSuspendCollectionChangedEvent();
+            ResumeList(_window.DetailList);
         }
     }
 
-    private static List<string> FormatLiveLines(LiveSessionSnapshot? live, int width, DateTimeOffset now)
+    private static List<HistoryLine> FormatLiveLines(LiveSessionSnapshot? live, int width, DateTimeOffset now)
     {
-        var lines = new List<string>();
-
-        foreach (var block in HistoryFormatter.FormatLive(live, now, width))
-        {
-            lines.AddRange(TextWrap.Wrap(block.Text, width, 0));
-        }
-
+        var lines = new List<HistoryLine>();
+        HistoryLayout.Append(HistoryFormatter.FormatLive(live, now, width), width, false, lines);
         return lines;
     }
 
     private TerminalAttribute? ListAttribute(int row)
     {
-        if (row < 0 || row >= _sessions.Count)
+        if (row < 0 || row >= _sessions.Count || row == _window.List.SelectedItem)
         {
             return null;
         }
 
-        return _sessions[row].DisplayState switch
-        {
-            SessionStates.Starting or SessionStates.Running => RunningAttribute,
-            "approval" => ApprovalAttribute,
-            "failed" or "interrupted" => FailureAttribute,
-            _ => null
-        };
+        return MonitorColors.ForListRow(_sessions[row].DisplayState);
     }
 
     private TerminalAttribute? DetailAttribute(int row)
     {
-        if (row < 0 || row >= _detailKinds.Count)
+        if (row < 0 || row >= _detailLineInfo.Count)
         {
             return null;
         }
 
-        return _detailKinds[row] switch
+        // The selection highlight shows only once the user scrolls away from the live end:
+        if (row == _window.DetailList.SelectedItem && row < _detailLineInfo.Count - 1)
         {
-            HistoryBlockKind.System or HistoryBlockKind.Thinking => DimAttribute,
-            HistoryBlockKind.Supervisor or HistoryBlockKind.ToolResult => GrayAttribute,
-            HistoryBlockKind.Tool => ToolAttribute,
-            HistoryBlockKind.Warning => WarningAttribute,
-            HistoryBlockKind.Live => LiveAttribute,
-            _ => null
-        };
+            return null;
+        }
+
+        var line = _detailLineInfo[row];
+        return MonitorColors.ForHistoryLine(line.Kind, line.Role);
     }
 
     private void UpdateFooter(CatalogSnapshot snapshot, IReadOnlyList<SessionSummary> sessions)

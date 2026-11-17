@@ -48,8 +48,8 @@ public class TuiPrintTests
         var text = writer.ToString();
         Assert.Contains("alpha  finished", text);
         Assert.Contains("tokens", text);
-        Assert.Contains("[task]", text);
-        Assert.Contains("Do the alpha task.", text);
+        Assert.Contains("\n-- task ---", text);
+        Assert.Contains("\n  Do the alpha task.", text);
     }
 
     [Fact]
