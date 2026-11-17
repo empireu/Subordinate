@@ -651,9 +651,11 @@ public sealed class MonitorController
         var approval = snapshot.Sessions.Count(session => session.DisplayState == "approval");
         var input = snapshot.Sessions.Sum(session => session.SessionCounters.InputTokens);
         var output = snapshot.Sessions.Sum(session => session.SessionCounters.OutputTokens);
+        var cached = snapshot.Sessions.Sum(session => session.SessionCounters.CachedInputTokens);
+        var cachedPercent = input > 0 ? (int)Math.Round(cached * 100.0 / input, MidpointRounding.AwayFromZero) : 0;
         var shownNotice = _detailOpen ? _historyNotice : _notice;
         var notice = shownNotice != null ? shownNotice + " | " : string.Empty;
         var keys = _detailOpen ? "esc back  r reasoning  o outputs  f follow  q back" : "enter open  a all  q quit";
-        SetTextIfChanged(_window.Footer, $"{notice}{running} running, {approval} awaiting approval, {sessions.Count} shown of {snapshot.Sessions.Count} | in {Units.FormatTokens(input)} out {Units.FormatTokens(output)} | live: {_server.Status} | {keys}");
+        SetTextIfChanged(_window.Footer, $"{notice}{running} running, {approval} awaiting approval, {sessions.Count} shown of {snapshot.Sessions.Count} | in {Units.FormatTokens(input)} ({cachedPercent}% cached) out {Units.FormatTokens(output)} | live: {_server.Status} | {keys}");
     }
 }
