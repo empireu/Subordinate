@@ -9,6 +9,7 @@ using KnowledgeSystem.Ai.Providers.Abstractions;
 using KnowledgeSystem.Events.Implementation;
 using Subordinate.Core.Classification;
 using Subordinate.Core.Gate;
+using Subordinate.Core.Monitoring;
 using Subordinate.Core.Output;
 using Subordinate.Core.Platform;
 using Subordinate.Core.Sessions;
@@ -50,7 +51,9 @@ public sealed class SessionRunner
     private readonly IChatProvider _provider;
     private readonly ChatRequestOptions _requestOptions;
     private readonly ICommandExecutor _executor;
+    private readonly IMonitorFeed _monitor;
     private readonly HashSet<string> _startedCallIds = [];
+    private readonly HashSet<string> _reportedToolCallIds = [];
     private readonly Stopwatch _stopwatch = new();
     private readonly object _statusLock = new();
 
@@ -72,7 +75,7 @@ public sealed class SessionRunner
     private DateTimeOffset? _activeToolStartedAt;
     private string? _activeToolName;
 
-    public SessionRunner(SessionStore store, SessionPaths paths, SessionRecord record, string runId, IChatProvider provider, ChatRequestOptions requestOptions, ICommandExecutor executor)
+    public SessionRunner(SessionStore store, SessionPaths paths, SessionRecord record, string runId, IChatProvider provider, ChatRequestOptions requestOptions, ICommandExecutor executor, IMonitorFeed? monitorFeed = null)
     {
         _store = store;
         _paths = paths;
@@ -80,6 +83,7 @@ public sealed class SessionRunner
         _runId = runId;
         _runDirectory = paths.RunDirectory(runId);
         _provider = provider;
+        _monitor = monitorFeed == null ? NullMonitorFeed.Instance : new GuardedMonitorFeed(monitorFeed);
         _requestOptions = new ChatRequestOptions
         {
             Model = requestOptions.Model,
@@ -120,6 +124,20 @@ public sealed class SessionRunner
     public string RunDirectory => _runDirectory;
 
     public async Task<RunOutcome> RunAsync(RunLimits limits, CancellationToken cancellationToken)
+    {
+        _monitor.Start();
+
+        try
+        {
+            return await RunAsyncCore(limits, cancellationToken);
+        }
+        finally
+        {
+            _monitor.Dispose();
+        }
+    }
+
+    private async Task<RunOutcome> RunAsyncCore(RunLimits limits, CancellationToken cancellationToken)
     {
         _stopwatch.Start();
         _limits = limits;
@@ -225,7 +243,7 @@ public sealed class SessionRunner
         _ledger = ledger;
         var gate = new SubordinateGate(ledger, () => _runId, MarkExecutionStartingAsync) { RefuseNewCalls = () => _forceFinalTurn };
         var agent = new SubordinateAgent(shell, gate);
-        _counting = new CountingChatProvider(_provider);
+        _counting = new CountingChatProvider(new MonitoredChatProvider(_provider, _monitor));
         _runner = new AgentRunner<SubordinateContext>(
             _counting,
             agent,
@@ -610,6 +628,8 @@ public sealed class SessionRunner
         RunArtifacts.AppendLog(_runDirectory, $"  -> {Shorten(FirstLine(text), 200)}");
         _record.FilesWritten = _context!.Environment.FilesWritten.Order(PlatformServices.Current.Paths.Comparer).ToList();
         _store.Save(_paths, _record);
+        _reportedToolCallIds.Add(item.CallId);
+        _monitor.Publish(new MonitorToolFinished(item.CallId, result.IsSuccessful, Truncate(FirstLine(text), MonitorProtocol.MaxFirstLineCharacters), DateTimeOffset.UtcNow));
         return text;
     }
 
@@ -636,6 +656,32 @@ public sealed class SessionRunner
 
         _record.Inflight = SnapshotInflight();
         _store.Save(_paths, _record);
+
+        var tool = string.Empty;
+        var summary = string.Empty;
+        var item = _ledger?.FindByCallId(callId);
+
+        if (item != null)
+        {
+            tool = item.Tool;
+            summary = item.Summary;
+        }
+        else if (_context != null)
+        {
+            for (var index = _context.ChatMessages.Count - 1; index >= 0; index--)
+            {
+                var call = _context.ChatMessages[index].Contents.OfType<ToolCallContent>().LastOrDefault(candidate => candidate.CallId == callId);
+
+                if (call != null)
+                {
+                    tool = call.ToolName;
+                    summary = ToolCallSummary.Describe(call);
+                    break;
+                }
+            }
+        }
+
+        _monitor.Publish(new MonitorToolStarted(callId, tool, Truncate(summary, MonitorProtocol.MaxSummaryCharacters), DateTimeOffset.UtcNow));
         return Task.CompletedTask;
     }
 
@@ -676,8 +722,37 @@ public sealed class SessionRunner
         }
 
         _store.Save(_paths, _record);
+        PublishToolFinishes();
+        _monitor.Publish(new MonitorTranscriptCommitted(_record.Transcript.Count, _record.Transcript.Bytes));
         TryWritePending();
         WriteStatus(SessionStates.Running);
+    }
+
+    private void PublishToolFinishes()
+    {
+        foreach (var frame in _runner?.ActiveToolCalls ?? [])
+        {
+            if (frame is not AgentToolFrame.RunningFrame running)
+            {
+                continue;
+            }
+
+            if (running.Result != null)
+            {
+                if (_reportedToolCallIds.Add(running.CallId))
+                {
+                    var text = running.Result.IsSuccessful ? running.Result.Output : running.Result.FormatError();
+                    _monitor.Publish(new MonitorToolFinished(running.CallId, running.Result.IsSuccessful, Truncate(FirstLine(text), MonitorProtocol.MaxFirstLineCharacters), DateTimeOffset.UtcNow));
+                }
+            }
+            else if (running.Deferral != null)
+            {
+                if (_reportedToolCallIds.Add(running.CallId))
+                {
+                    _monitor.Publish(new MonitorToolFinished(running.CallId, false, Truncate(FirstLine(running.Deferral.Message), MonitorProtocol.MaxFirstLineCharacters), DateTimeOffset.UtcNow));
+                }
+            }
+        }
     }
 
     private InflightRecord? SnapshotInflight()
@@ -776,9 +851,7 @@ public sealed class SessionRunner
 
                     foreach (var call in calls)
                     {
-                        var summary = call.Arguments.ValueKind == System.Text.Json.JsonValueKind.Object && call.Arguments.TryGetProperty("command", out var command)
-                            ? command.GetString() ?? string.Empty
-                            : call.Arguments.ValueKind == System.Text.Json.JsonValueKind.Object && call.Arguments.TryGetProperty("path", out var path) ? path.GetString() ?? string.Empty : string.Empty;
+                        var summary = ToolCallSummary.Describe(call);
                         RunArtifacts.AppendLog(_runDirectory, $"- [{Now()}] {call.ToolName}: {Shorten(FirstLine(summary), 200)}");
                         _lastActivity = $"{call.ToolName}: {Shorten(FirstLine(summary), 120)}";
                     }
@@ -876,6 +949,7 @@ public sealed class SessionRunner
         }
 
         RunArtifacts.AppendLog(_runDirectory, $"- [{Now()}] run ended: {state}");
+        _monitor.Publish(new MonitorRunEnded(state, error?.Message));
     }
 
     private string? BuildFallbackText(string state, ErrorRecord? error)
@@ -920,7 +994,22 @@ public sealed class SessionRunner
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException)
             {
             }
+
+            _monitor.Publish(new MonitorStatus(
+                state,
+                Math.Round(_stopwatch.Elapsed.TotalSeconds, 1),
+                TurnsRemaining(),
+                _record.PendingCount,
+                _lastActivity,
+                ToMonitorCounters(_record.CurrentRun?.Counters ?? new CountersRecord()),
+                ToMonitorCounters(_record.Counters),
+                _record.ContextTokens));
         }
+    }
+
+    private static MonitorStatusCounters ToMonitorCounters(CountersRecord counters)
+    {
+        return new MonitorStatusCounters(counters.ModelCalls, counters.ToolCalls, counters.InputTokens, counters.CachedInputTokens, counters.OutputTokens);
     }
 
     private void TryWritePending()
@@ -1000,6 +1089,11 @@ public sealed class SessionRunner
     private static string Shorten(string text, int length)
     {
         return text.Length <= length ? text : text[..length] + "...";
+    }
+
+    private static string Truncate(string text, int length)
+    {
+        return text.Length <= length ? text : text[..length];
     }
 
     private static string Now()

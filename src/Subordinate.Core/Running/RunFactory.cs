@@ -1,5 +1,6 @@
 using Subordinate.Core.Classification;
 using Subordinate.Core.Configuration;
+using Subordinate.Core.Monitoring;
 using Subordinate.Core.Sessions;
 using Subordinate.Core.Shells;
 
@@ -39,6 +40,17 @@ public static class RunFactory
         }
 
         var executor = new ShellCommandExecutor(shell, secretVariables);
-        return new SessionRunner(store, paths, record, runId, chatProvider, config.CreateRequestOptions(model), executor);
+        var endpoint = MonitorEndpoint.Resolve(config, store.Home);
+        var runInfo = new MonitorRunInfo(
+            paths.Directory,
+            record.Name,
+            record.Workdir,
+            runId,
+            record.CurrentRun?.Kind ?? string.Empty,
+            Environment.ProcessId,
+            record.Model.Alias,
+            record.Model.ModelId,
+            record.CurrentRun?.StartedAt ?? DateTimeOffset.UtcNow);
+        return new SessionRunner(store, paths, record, runId, chatProvider, config.CreateRequestOptions(model), executor, MonitorFeedFactory.Create(endpoint, runInfo));
     }
 }

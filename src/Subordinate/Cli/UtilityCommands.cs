@@ -4,6 +4,7 @@ using Subordinate.Core;
 using Subordinate.Core.Classification;
 using Subordinate.Core.Configuration;
 using Subordinate.Core.Json;
+using Subordinate.Core.Monitoring;
 using Subordinate.Core.Policy;
 using Subordinate.Core.Platform;
 using Subordinate.Core.Running;
@@ -196,6 +197,28 @@ internal static class UtilityCommands
         }
 
         checks.Add(("commands", true, $"{CommandDatabase.Count} entries in the command database"));
+
+        var endpoint = MonitorEndpoint.Resolve(config, home);
+
+        if (endpoint.Problem != null)
+        {
+            checks.Add(("monitor", false, endpoint.Problem));
+        }
+        else if (!endpoint.Enabled)
+        {
+            checks.Add(("monitor", true, "disabled in config.json"));
+        }
+        else
+        {
+            var detail = $"enabled, socket {endpoint.SocketPath}";
+
+            if (endpoint.SocketPath != null && File.Exists(endpoint.SocketPath))
+            {
+                detail += ", a monitor is listening";
+            }
+
+            checks.Add(("monitor", true, detail));
+        }
 
         var envelope = new Envelope
         {

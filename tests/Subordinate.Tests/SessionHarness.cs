@@ -2,6 +2,7 @@ using System.Runtime.CompilerServices;
 using System.Text.Json;
 using KnowledgeSystem.Ai.Providers.Abstractions;
 using Subordinate.Core.Classification;
+using Subordinate.Core.Monitoring;
 using Subordinate.Core.Running;
 using Subordinate.Core.Sessions;
 using Subordinate.Core.Shells;
@@ -63,7 +64,7 @@ internal sealed class SessionHarness : IDisposable
         Store.Save(Paths, record);
     }
 
-    public async Task<(RunOutcome Outcome, SessionRecord Record)> RunAsync(IChatProvider provider, RunLimits? limits = null, ICommandExecutor? executor = null, CancellationToken cancellationToken = default)
+    public async Task<(RunOutcome Outcome, SessionRecord Record)> RunAsync(IChatProvider provider, RunLimits? limits = null, ICommandExecutor? executor = null, CancellationToken cancellationToken = default, IMonitorFeed? monitorFeed = null)
     {
         var record = Load();
         var runId = Store.CreateRunDirectory(Paths, record.Runs.Count + 1, 10);
@@ -71,7 +72,7 @@ internal sealed class SessionHarness : IDisposable
         record.State = SessionStates.Starting;
         Store.Save(Paths, record);
 
-        var runner = new SessionRunner(Store, Paths, record, runId, provider, new ChatRequestOptions(), executor ?? Executor);
+        var runner = new SessionRunner(Store, Paths, record, runId, provider, new ChatRequestOptions(), executor ?? Executor, monitorFeed);
         var outcome = await runner.RunAsync(limits ?? new RunLimits { MaxModelCalls = 10, MaxDuration = TimeSpan.FromMinutes(1) }, cancellationToken);
         return (outcome, Load());
     }
