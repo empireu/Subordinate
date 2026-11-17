@@ -228,7 +228,9 @@ public sealed class MonitorController
             rows.Add(SessionRowFormatter.FormatRow(session, live?.IsConnected == true, activity, _spinner, width, now));
         }
 
-        _window.Header.Text = SessionRowFormatter.FormatHeader(width);
+        _window.Header.Text = _sessions.Count == 0
+            ? $"No sessions in {_window.Home}."
+            : SessionRowFormatter.FormatHeader(width);
         ReplaceRows(rows);
 
         var selectedIndex = -1;

@@ -13,6 +13,8 @@ dotnet test tests/Subordinate.Tests
 
 Every build also publishes a self-contained copy and deploys it to `bin` under the Subordinate home. On Windows that is `%SUBORDINATE_HOME%\bin`, or `%USERPROFILE%\.subordinate\bin` when the variable is not set, and the program is `subordinate.exe`. On Linux that is `$SUBORDINATE_HOME/bin`, or `~/.subordinate/bin` when the variable is not set, and the program is `subordinate`. The copy needs no installed .NET runtime and does not break when the repo is cleaned. If a session is running from that copy, its files are locked. The deploy then logs a warning and keeps the old copy, and the next build retries.
 
+The same build deploys the session monitor to `bin/tui` under the home, as `subordinate-tui.exe` on Windows and `subordinate-tui` on Linux. See [Session monitor](#session-monitor).
+
 ## Configuration
 
 `subordinate init` writes a template to `%SUBORDINATE_HOME%\config.json`, or `~/.subordinate/config.json` when `SUBORDINATE_HOME` is not set. Sessions live next to it under `sessions/`.
@@ -23,15 +25,20 @@ Every build also publishes a self-contained copy and deploys it to `bin` under t
     "mistral": { "protocol": "mistral-chat-completions", "endpoint": "https://api.mistral.ai/v1", "api_key_env": "MISTRAL_API_KEY" }
   },
   "models": {
-    "default": { "provider": "mistral", "model": "REPLACE-WITH-MODEL-ID", "temperature": 0.2 }
+    "default": { "provider": "mistral", "model": "REPLACE-WITH-MODEL-ID", "temperature": 0.2, "context_window": 128000 }
   },
   "default_model": "default",
   "shells": { "bash": null, "powershell": null, "pwsh": null },
-  "defaults": { "shell": "bash", "max_turns": 100, "max_minutes": 60, "shell_timeout_seconds": 120, "keep_runs": 10 }
+  "defaults": { "shell": "bash", "max_turns": 100, "max_minutes": 60, "shell_timeout_seconds": 120, "keep_runs": 10 },
+  "monitor": { "enabled": true }
 }
 ```
 
 `protocol` defaults to `mistral-chat-completions`, the only protocol registered. Add more entries under `models` to have several aliases and pick one with `start --model ALIAS`. The API key is read from the environment variable named by `api_key_env` and is never written to disk or output. Every variable named as an `api_key_env`, and every variable whose name looks like a secret, is removed from the environment of the commands the subagent runs. `subordinate doctor` checks the configuration, the key and the shells.
+
+`context_window` is optional. When it is set, the session monitor shows a context bar for that model.
+
+`monitor.enabled` defaults to true. `monitor.socket_path` overrides the default `<home>/monitor.sock` and must be an absolute path no longer than 100 bytes. Setting `monitor.enabled` to false turns off all socket code in Subordinate; the monitor still shows sessions from their files.
 
 ### System prompt
 
@@ -71,7 +78,7 @@ Each run writes into `sessions/<session>/runs/<run_id>/`:
 
 | File | Content |
 | --- | --- |
-| `status.json` | Live progress: state, pid, elapsed time, run counters, session totals, turns remaining, last activity. |
+| `status.json` | Live progress: state, pid, elapsed time, run counters, session totals, turns remaining, last activity, `context_tokens`. |
 | `result.json` | Final state of the run, run counters, session totals, limit details, pending count, files written, final answer flag. |
 | `result.md` | The subagent's final answer, or why the run stopped. |
 | `pending.json` / `pending.md` | Open pending items. Both carry the same ids. |
@@ -80,6 +87,23 @@ Each run writes into `sessions/<session>/runs/<run_id>/`:
 The run counters are under `run`; the session totals are under `session_totals`. Both objects use the same counter names.
 
 `usage.jsonl` in the Subordinate home is append-only. Every finished run adds one JSON line with its model, state, duration and counters. It is not deleted with the session, so `usage` can still report sessions that are gone.
+
+## Session monitor
+
+`subordinate-tui` is a read-only terminal UI for watching sessions. It lists running and recent sessions with their state, model, elapsed time, turns, tokens, context size and a live activity hint. Enter opens a session and shows its stats header and full history, including streaming reasoning and text while the run is active. It never writes session files; the only file it creates is its own socket.
+
+```
+subordinate-tui [--home DIR] [--all]
+subordinate-tui --print [--home DIR] [--all] [--session NAME [--workdir DIR]] [--width N] [--wait-seconds S]
+```
+
+Keys: up, down, page up, page down, home and end move or scroll; enter opens; esc goes back or quits from the list; `q` goes back or quits; `a` toggles all sessions; `r` shows or hides reasoning; `o` shows or hides full tool outputs; `f` follows the live history.
+
+The default list shows running and starting sessions, sessions awaiting approval, and sessions updated in the last 24 hours. `a` shows every session. Running sessions come first, then sessions awaiting approval, then the rest by update time.
+
+`--print` writes the same content as plain text, without starting Terminal.Gui. It is meant for scripts and for checking the output without a terminal. `--wait-seconds` first starts the monitor feed for that many seconds, so live hints and streaming history appear in the output.
+
+Live streaming uses a Unix socket at `<home>/monitor.sock`. On Linux only the user can reach it. Only one monitor can stream at a time; a second one says `another monitor is running` in the footer and still lists sessions from their files. Setting `monitor.enabled` to false in `config.json` turns off all socket code in Subordinate; the monitor then shows sessions from their files only.
 
 ## Exit codes
 

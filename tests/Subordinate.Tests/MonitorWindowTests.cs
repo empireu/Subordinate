@@ -15,6 +15,11 @@ namespace Subordinate.Tests;
 [Collection("monitor")]
 public class MonitorWindowTests
 {
+    static MonitorWindowTests()
+    {
+        Environment.SetEnvironmentVariable("DisableRealDriverIO", "1");
+    }
+
     [Fact]
     public void TheListShowsTheHeaderAndRunningSessionFirst()
     {
@@ -37,6 +42,16 @@ public class MonitorWindowTests
         Assert.True(
             screen.IndexOf("approval-one", StringComparison.Ordinal) < screen.IndexOf("finished-one", StringComparison.Ordinal),
             "The approval session should be listed before the finished session.");
+    }
+
+    [Fact]
+    public void AnEmptyHomeShowsAHint()
+    {
+        using var harness = new WindowHarness();
+
+        harness.Refresh();
+
+        Assert.Contains("No sessions in", harness.Screen);
     }
 
     [Fact]

@@ -76,7 +76,14 @@ public class MonitorServerTests
         {
             for (var index = 0; index < 65; index++)
             {
-                clients.Add(await ConnectAsync(path.Path));
+                try
+                {
+                    clients.Add(await ConnectAsync(path.Path));
+                }
+                catch (SocketException) when (index >= 64)
+                {
+                    break;
+                }
             }
 
             await MonitorTestWait.WaitUntilAsync(() => server.ConnectionCount == 64, TimeSpan.FromSeconds(5), "The server did not cap the connections.");

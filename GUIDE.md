@@ -17,7 +17,7 @@ Every shell command and file write a subagent attempts is classified determinist
 - Two models, and only these two: DeepSeek V4.1 Flash 1017 and GLM 5.3 Flash. Other models are not recommended for this type of work.
 - The .NET 11 SDK, to build Subordinate.
 - bash 5.2 or 5.3: Git Bash on Windows, the system bash on Linux. PowerShell 7.6.4 or later 7.6.x is optional.
-- Claude Code or your agent of choice, which drives Subordinate. Keep in mind Subordinate is not designed for human use, as it doesn't have a user interface.
+- Claude Code or your agent of choice, which drives Subordinate. Subordinate is driven by an agent, but `subordinate-tui` lets you watch its sessions in a terminal.
 
 ### Get started
 
@@ -34,6 +34,7 @@ Every shell command and file write a subagent attempts is classified determinist
 - **Pending items that need you** are network access, writes outside the project, credential files, and dangerous commands such as `git push` or `kill`. The agent asks you before approving them.
 - **The classifier is a deterministic floor, not a sandbox.** It blocks what it can recognize. Do not point Subordinate at code you would not run yourself.
 - **Cost.** `subordinate usage --since 7d` shows tokens and runs by model and project.
+- **Watch sessions live.** `subordinate-tui` lists sessions and shows their history and streaming output. It is read-only; see [README.md](README.md#session-monitor).
 - The full command reference is in [README.md](README.md).
 
 ## Part 2: For Claude Code/The Agent
@@ -63,7 +64,7 @@ The build publishes a self-contained copy to the Subordinate home:
 | Windows  | `%USERPROFILE%\.subordinate\bin\subordinate.exe` |
 | Linux    | `~/.subordinate/bin/subordinate`                 |
 
-If `SUBORDINATE_HOME` is set, the home is that directory instead. Record the absolute path of the program. Below, `SUBORDINATE` stands for it.
+If `SUBORDINATE_HOME` is set, the home is that directory instead. Record the absolute path of the program. Below, `SUBORDINATE` stands for it. The same build deploys the monitor to `%USERPROFILE%\.subordinate\bin\tui\subordinate-tui.exe` on Windows and `~/.subordinate/bin/tui/subordinate-tui` on Linux.
 
 ### 2.3 Configure the models
 

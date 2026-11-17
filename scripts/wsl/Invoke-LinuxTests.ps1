@@ -64,7 +64,8 @@ try {
         $smokeArguments = @(
             "-d", $DistroName, "-u", $UserName, "--exec", "bash",
             "$linuxRepository/scripts/smoke.sh",
-            "--binary", "/home/$UserName/.subordinate/bin/subordinate"
+            "--binary", "/home/$UserName/.subordinate/bin/subordinate",
+            "--tui-binary", "/home/$UserName/.subordinate/bin/tui/subordinate-tui"
         )
 
         if ($Live) {

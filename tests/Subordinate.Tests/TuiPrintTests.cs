@@ -24,6 +24,18 @@ public class TuiPrintTests
     }
 
     [Fact]
+    public void PrintOnAnEmptyHomeShowsAHint()
+    {
+        using var home = new TuiTestHome();
+        var writer = new StringWriter();
+
+        var exit = TuiPrint.Run(new TuiOptions { Print = true, Home = home.Home, Width = 120 }, writer);
+
+        Assert.Equal(0, exit);
+        Assert.Contains($"No sessions in {home.Home}.", writer.ToString());
+    }
+
+    [Fact]
     public void PrintSessionShowsTheStatsHeaderAndHistory()
     {
         using var home = new TuiTestHome();

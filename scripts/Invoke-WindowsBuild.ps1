@@ -93,7 +93,8 @@ try {
 
         $smokeScript = (Join-Path $repositoryRoot "scripts/smoke.sh").Replace('\', '/')
         $binaryPath = (Join-Path $repositoryRoot "src/Subordinate/bin/$Configuration/net11.0/subordinate.exe").Replace('\', '/')
-        & $gitBash $smokeScript --binary $binaryPath *> $smokeLog
+        $tuiBinaryPath = (Join-Path $repositoryRoot "src/Subordinate.Tui/bin/$Configuration/net11.0/subordinate-tui.exe").Replace('\', '/')
+        & $gitBash $smokeScript --binary $binaryPath --tui-binary $tuiBinaryPath *> $smokeLog
 
         if ($LASTEXITCODE -ne 0) {
             $smokeFailed = $true

@@ -42,6 +42,7 @@ public sealed class MonitorWindow : IDisposable
 
     public void ShowList()
     {
+        Header.Visible = true;
         List.Visible = true;
         DetailHeader.Visible = false;
         DetailList.Visible = false;
@@ -50,6 +51,7 @@ public sealed class MonitorWindow : IDisposable
 
     public void ShowDetail()
     {
+        Header.Visible = false;
         List.Visible = false;
         DetailHeader.Visible = true;
         DetailList.Visible = true;

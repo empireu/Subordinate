@@ -2,6 +2,7 @@
 set -u
 
 binary=""
+tui_binary=""
 live_config=""
 
 while [ "$#" -gt 0 ]; do
@@ -12,6 +13,14 @@ while [ "$#" -gt 0 ]; do
                 exit 2
             fi
             binary="$2"
+            shift 2
+            ;;
+        --tui-binary)
+            if [ "$#" -lt 2 ]; then
+                printf 'Missing value for --tui-binary.\n' >&2
+                exit 2
+            fi
+            tui_binary="$2"
             shift 2
             ;;
         --live-config)
@@ -30,7 +39,7 @@ while [ "$#" -gt 0 ]; do
 done
 
 if [ -z "$binary" ]; then
-    printf 'Usage: %s --binary <path>\n' "$0" >&2
+    printf 'Usage: %s --binary <path> [--tui-binary <path>] [--live-config <path>]\n' "$0" >&2
     exit 2
 fi
 
@@ -213,6 +222,19 @@ else
         pass failed-run
     else
         fail failed-run "wait exit $status"
+    fi
+fi
+
+if [ -z "$tui_binary" ]; then
+    printf 'SMOKE SKIP tui-print: no --tui-binary was given.\n'
+else
+    output=$("$tui_binary" --print 2>&1)
+    status=$?
+
+    if [ "$status" -eq 0 ] && printf '%s\n' "$output" | grep -q 'smoke-dead' && printf '%s\n' "$output" | grep -q 'failed'; then
+        pass tui-print
+    else
+        fail tui-print "exit $status"
     fi
 fi
 
