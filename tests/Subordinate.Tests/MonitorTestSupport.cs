@@ -375,6 +375,22 @@ internal sealed class TuiTestHome : IDisposable
         Store.Save(paths, record);
     }
 
+    public void AppendUnreadableLine(SessionPaths paths)
+    {
+        var record = Store.Load(paths);
+        var line = "this is not a transcript message\n";
+
+        using (var stream = new FileStream(paths.TranscriptFile, FileMode.Open, FileAccess.Write, FileShare.ReadWrite))
+        {
+            stream.SetLength(record.Transcript.Bytes);
+            stream.Seek(record.Transcript.Bytes, SeekOrigin.Begin);
+            stream.Write(Encoding.UTF8.GetBytes(line));
+        }
+
+        record.Transcript = new TranscriptPointer { Count = record.Transcript.Count + 1, Bytes = record.Transcript.Bytes + line.Length };
+        Store.Save(paths, record);
+    }
+
     public void Dispose()
     {
         try

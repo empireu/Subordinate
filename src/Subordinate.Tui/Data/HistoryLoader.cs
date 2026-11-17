@@ -197,7 +197,8 @@ public sealed class HistoryLoader : IDisposable
                 }
 
                 var refresh = _tail.Refresh(record);
-                _recordCount = refresh.Reset ? refresh.Messages.Count : _recordCount + refresh.Messages.Count;
+                var changed = refresh.Reset || refresh.Messages.Count > 0 || refresh.Notice != _notice || _loading;
+                _recordCount = _tail.MessagesRead;
                 _recordWriteTimeUtc = writeTime;
                 _recordLength = length;
 
@@ -210,7 +211,11 @@ public sealed class HistoryLoader : IDisposable
                 _pendingMessages.AddRange(refresh.Messages);
                 _notice = refresh.Notice;
                 _loading = false;
-                _version++;
+
+                if (changed)
+                {
+                    _version++;
+                }
             }
         }
         catch (Exception)
@@ -231,6 +236,11 @@ public sealed class HistoryLoader : IDisposable
     {
         lock (_lock)
         {
+            if (_notice == notice && !_loading)
+            {
+                return;
+            }
+
             _notice = notice;
             _loading = false;
             _version++;

@@ -56,6 +56,7 @@ public static class HistoryFormatter
     public const int CollapsedOutputLines = 8;
     public const int ExpandedOutputLines = 200;
     public const int LiveTailLines = 12;
+    private static readonly char[] LineBreaks = ['\n', '\r'];
 
     public static IReadOnlyList<HistoryBlock> FormatMessage(ChatMessage message, HistoryFormatState state, bool showReasoning, bool expandOutputs)
     {
@@ -340,9 +341,20 @@ public static class HistoryFormatter
         return index > 0 ? text[..index] : text;
     }
 
-    private static string TailLines(string text, int width, int count)
+    /// <summary>
+    ///     Wraps only the paragraphs that can reach the last lines, so the breaks match wrapping the whole text.
+    /// </summary>
+    internal static string TailLines(string text, int width, int count)
     {
-        var sanitized = TerminalText.Sanitize(text);
+        var needed = (count + 1) * Math.Max(10, width);
+        var start = 0;
+
+        if (text.Length > needed)
+        {
+            start = text.LastIndexOfAny(LineBreaks, text.Length - needed) + 1;
+        }
+
+        var sanitized = TerminalText.Sanitize(start == 0 ? text : text[start..]);
         var lines = TextWrap.Wrap(sanitized, width, 0);
         return string.Join("\n", lines.Skip(Math.Max(0, lines.Count - count)));
     }

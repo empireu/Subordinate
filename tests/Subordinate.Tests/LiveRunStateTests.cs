@@ -284,6 +284,21 @@ public class LiveRunStateTests
     }
 
     [Fact]
+    public void ASmallSnapshotCopiesOnlyTheEndOfTheText()
+    {
+        var state = new LiveRunState();
+        state.Apply(Hello());
+        state.Apply(new MonitorTurnStarted(1, Time));
+        state.Apply(new MonitorReasoningDelta(new string('a', 5_000) + "the end"));
+
+        var snapshot = state.CreateSnapshot(100);
+
+        Assert.Equal(100, snapshot.Reasoning.Length);
+        Assert.EndsWith("the end", snapshot.Reasoning);
+        Assert.Equal(5_007, snapshot.ReasoningCharacters);
+    }
+
+    [Fact]
     public void ReasoningTailDoesNotSplitSurrogatePairs()
     {
         var state = new LiveRunState();

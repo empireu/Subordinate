@@ -42,6 +42,27 @@ public class TranscriptTailTests
     }
 
     [Fact]
+    public void AnUnreadableLineIsSkippedAndKeepsItsNotice()
+    {
+        using var home = new TuiTestHome();
+        var paths = home.CreateSession("bad-line", SessionStates.Finished, DateTimeOffset.UtcNow.AddMinutes(-1), "The task.");
+        var tail = new TranscriptTail(paths.TranscriptFile);
+        var before = tail.Refresh(home.Store.Load(paths)).Messages.Count;
+        home.AppendUnreadableLine(paths);
+        home.AppendMessages(paths, SessionHarness.Text(ChatRole.Assistant, "after"));
+
+        var refresh = tail.Refresh(home.Store.Load(paths));
+        var idle = tail.Refresh(home.Store.Load(paths));
+
+        Assert.Single(refresh.Messages);
+        Assert.Equal("after", refresh.Messages[0].GetText());
+        Assert.Equal(before + 2, tail.MessagesRead);
+        Assert.Equal("1 transcript line could not be read and is not shown.", refresh.Notice);
+        Assert.Empty(idle.Messages);
+        Assert.Equal(refresh.Notice, idle.Notice);
+    }
+
+    [Fact]
     public void ARecreatedSessionResetsTheTail()
     {
         using var harness = new SessionHarness();

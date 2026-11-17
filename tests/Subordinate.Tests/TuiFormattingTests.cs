@@ -95,6 +95,34 @@ public class TuiFormattingTests
     }
 
     [Fact]
+    public void TextWrapBreaksAsciiLikeOtherSingleColumnText()
+    {
+        var random = new Random(1234);
+
+        for (var sample = 0; sample < 500; sample++)
+        {
+            var builder = new System.Text.StringBuilder();
+            var length = random.Next(0, 120);
+
+            for (var index = 0; index < length; index++)
+            {
+                var roll = random.Next(10);
+                builder.Append(roll < 3 ? ' ' : roll < 9 ? (char)('a' + random.Next(5)) : 'x');
+            }
+
+            var ascii = builder.ToString();
+            var accented = ascii.Replace('x', 'é');
+            var width = random.Next(5, 40);
+            var indent = random.Next(0, 6);
+
+            var asciiLines = TextWrap.Wrap(ascii, width, indent);
+            var accentedLines = TextWrap.Wrap(accented, width, indent).Select(line => line.Replace('é', 'x'));
+
+            Assert.True(asciiLines.SequenceEqual(accentedLines), $"\"{ascii}\" at width {width} indent {indent}");
+        }
+    }
+
+    [Fact]
     public void SessionRowFormatterDropsColumnsAsTheWidthShrinks()
     {
         var session = CreateSession(

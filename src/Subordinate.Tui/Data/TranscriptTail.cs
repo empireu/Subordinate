@@ -14,8 +14,14 @@ public sealed class TranscriptTail(string transcriptPath)
     private DateTimeOffset _createdAt;
     private long _offset;
     private int _messagesRead;
+    private int _unreadableLines;
 
     public IReadOnlyList<ChatMessage> Messages => _messages;
+
+    /// <summary>
+    ///     Counts transcript lines consumed so far, including the ones that could not be read.
+    /// </summary>
+    public int MessagesRead => _messagesRead;
 
     public TranscriptRefresh Refresh(SessionRecord record)
     {
@@ -27,12 +33,13 @@ public sealed class TranscriptTail(string transcriptPath)
             _createdAt = record.CreatedAt;
             _offset = 0;
             _messagesRead = 0;
+            _unreadableLines = 0;
             _messages.Clear();
         }
 
         if (pointer.Bytes <= _offset)
         {
-            return new TranscriptRefresh([], reset, null);
+            return new TranscriptRefresh([], reset, UnreadableNotice());
         }
 
         var count = pointer.Bytes - _offset;
@@ -49,45 +56,52 @@ public sealed class TranscriptTail(string transcriptPath)
             return new TranscriptRefresh([], reset, "The transcript could not be read.");
         }
 
-        var text = Encoding.UTF8.GetString(bytes);
         var start = 0;
         var added = new List<ChatMessage>();
-        string? notice = null;
 
-        while (start < text.Length)
+        while (start < bytes.Length)
         {
-            var newline = text.IndexOf('\n', start);
+            var newline = Array.IndexOf(bytes, (byte)'\n', start);
 
             if (newline < 0)
             {
                 break;
             }
 
-            var line = text[start..newline];
             var lineStart = start;
             start = newline + 1;
 
-            if (line.Length == 0)
+            if (newline == lineStart)
             {
                 continue;
             }
+
+            var line = Encoding.UTF8.GetString(bytes, lineStart, newline - lineStart);
+            _messagesRead++;
 
             try
             {
                 var message = TranscriptSerializer.Deserialize(line);
                 _messages.Add(message);
-                _messagesRead++;
                 added.Add(message);
             }
             catch (Exception ex) when (ex is JsonException or InvalidDataException or KeyNotFoundException or InvalidOperationException)
             {
-                notice = "The transcript contains a line that cannot be read.";
-                start = lineStart;
-                break;
+                _unreadableLines++;
             }
         }
 
-        _offset += Encoding.UTF8.GetByteCount(text.AsSpan(0, start));
-        return new TranscriptRefresh(added, reset, notice);
+        _offset += start;
+        return new TranscriptRefresh(added, reset, UnreadableNotice());
+    }
+
+    private string? UnreadableNotice()
+    {
+        return _unreadableLines switch
+        {
+            0 => null,
+            1 => "1 transcript line could not be read and is not shown.",
+            _ => $"{_unreadableLines} transcript lines could not be read and are not shown."
+        };
     }
 }

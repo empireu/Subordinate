@@ -35,6 +35,12 @@ public static class TextWrap
 
     private static void WrapLine(string source, int width, int indent, List<string> lines)
     {
+        if (IsPrintableAscii(source))
+        {
+            WrapAsciiLine(source, width, indent, lines);
+            return;
+        }
+
         var runes = ExpandTabs(source);
 
         if (runes.Count == 0)
@@ -45,6 +51,8 @@ public static class TextWrap
 
         var start = 0;
         var firstLine = true;
+        var builder = new StringBuilder();
+        Span<char> encoded = stackalloc char[2];
 
         while (start < runes.Count)
         {
@@ -86,12 +94,74 @@ public static class TextWrap
                 end = start + 1;
             }
 
-            var line = string.Concat(runes.Skip(start).Take(end - start).Select(item => item.Rune.ToString())).TrimEnd(' ');
+            builder.Clear();
+
+            for (var index = start; index < end; index++)
+            {
+                var written = runes[index].Rune.EncodeToUtf16(encoded);
+                builder.Append(encoded[..written]);
+            }
+
+            var line = builder.ToString().TrimEnd(' ');
             lines.Add(firstLine ? line : new string(' ', indent) + line);
             firstLine = false;
             start = end;
 
             while (start < runes.Count && runes[start].Rune.Value == ' ')
+            {
+                start++;
+            }
+        }
+    }
+
+    private static bool IsPrintableAscii(string source)
+    {
+        foreach (var character in source)
+        {
+            if (character is < ' ' or > '~')
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    ///     Wraps a line where every character is one column wide, with the same breaks as the general path.
+    /// </summary>
+    private static void WrapAsciiLine(string source, int width, int indent, List<string> lines)
+    {
+        if (source.Length <= width)
+        {
+            lines.Add(source.TrimEnd(' '));
+            return;
+        }
+
+        var start = 0;
+        var firstLine = true;
+
+        while (start < source.Length)
+        {
+            var available = firstLine ? width : Math.Max(1, width - indent);
+            var end = Math.Min(source.Length, start + available);
+
+            if (end < source.Length)
+            {
+                var lastSpace = source[end] == ' ' ? end : source.LastIndexOf(' ', end - 1, end - start);
+
+                if (lastSpace > start)
+                {
+                    end = lastSpace;
+                }
+            }
+
+            var line = source[start..end].TrimEnd(' ');
+            lines.Add(firstLine ? line : new string(' ', indent) + line);
+            firstLine = false;
+            start = end;
+
+            while (start < source.Length && source[start] == ' ')
             {
                 start++;
             }

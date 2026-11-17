@@ -212,7 +212,7 @@ public sealed class SocketMonitorFeed : IMonitorFeed
             }
 
             var payload = Encoding.ASCII.GetBytes(MonitorProtocol.Serialize(CreateHello()) + "\n" + MonitorProtocol.Serialize(snapshot) + "\n");
-            await candidate.SendAsync(payload, SocketFlags.None, timeout.Token);
+            await SendAllAsync(candidate, payload, timeout.Token);
 
             lock (_lock)
             {
@@ -306,11 +306,28 @@ public sealed class SocketMonitorFeed : IMonitorFeed
         {
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token);
             timeout.CancelAfter(_writeTimeout);
-            await socket.SendAsync(payload, SocketFlags.None, timeout.Token);
+            await SendAllAsync(socket, payload, timeout.Token);
         }
         catch (Exception)
         {
             CloseConnection();
+        }
+    }
+
+    private static async Task SendAllAsync(Socket socket, byte[] payload, CancellationToken cancellationToken)
+    {
+        var offset = 0;
+
+        while (offset < payload.Length)
+        {
+            var sent = await socket.SendAsync(payload.AsMemory(offset), SocketFlags.None, cancellationToken);
+
+            if (sent <= 0)
+            {
+                throw new IOException("The monitor socket stopped accepting data.");
+            }
+
+            offset += sent;
         }
     }
 

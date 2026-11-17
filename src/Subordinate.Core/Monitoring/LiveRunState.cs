@@ -32,11 +32,11 @@ public sealed class LiveRunState : IEquatable<LiveRunState>
 
     public int ModelCall { get; private set; }
 
-    public string Reasoning => Tail(_reasoning);
+    public string Reasoning => Tail(_reasoning, MonitorProtocol.LiveTextTailCharacters);
 
     public long ReasoningCharacters { get; private set; }
 
-    public string Text => Tail(_text);
+    public string Text => Tail(_text, MonitorProtocol.LiveTextTailCharacters);
 
     public long TextCharacters { get; private set; }
 
@@ -192,13 +192,23 @@ public sealed class LiveRunState : IEquatable<LiveRunState>
 
     public MonitorSnapshot CreateSnapshot()
     {
+        return CreateSnapshot(MonitorProtocol.LiveTextTailCharacters);
+    }
+
+    /// <summary>
+    ///     Copies at most the last tailCharacters of the live reasoning and text. The character counts still cover the whole turn.
+    /// </summary>
+    public MonitorSnapshot CreateSnapshot(int tailCharacters)
+    {
+        var cap = Math.Clamp(tailCharacters, 0, MonitorProtocol.LiveTextTailCharacters);
+
         return new MonitorSnapshot(
             Phase,
             PhaseStartedAt,
             ModelCall,
-            Reasoning,
+            Tail(_reasoning, cap),
             ReasoningCharacters,
-            Text,
+            Tail(_text, cap),
             TextCharacters,
             _proposedCalls.ToArray(),
             ActiveTool,
@@ -311,10 +321,8 @@ public sealed class LiveRunState : IEquatable<LiveRunState>
         builder.Remove(0, remove);
     }
 
-    private static string Tail(StringBuilder builder)
+    private static string Tail(StringBuilder builder, int cap)
     {
-        var cap = MonitorProtocol.LiveTextTailCharacters;
-
         if (builder.Length <= cap)
         {
             return builder.ToString();
@@ -322,7 +330,7 @@ public sealed class LiveRunState : IEquatable<LiveRunState>
 
         var start = builder.Length - cap;
 
-        if (char.IsLowSurrogate(builder[start]) && char.IsHighSurrogate(builder[start - 1]))
+        if (start > 0 && char.IsLowSurrogate(builder[start]) && char.IsHighSurrogate(builder[start - 1]))
         {
             start++;
         }

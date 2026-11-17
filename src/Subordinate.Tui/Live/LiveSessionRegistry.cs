@@ -69,6 +69,14 @@ public sealed class LiveSessionRegistry
 
     public LiveSessionSnapshot? GetSnapshot(string directory)
     {
+        return GetSnapshot(directory, MonitorProtocol.LiveTextTailCharacters);
+    }
+
+    /// <summary>
+    ///     Copies only the last tailCharacters of the live reasoning and text, which is all a screen can show.
+    /// </summary>
+    public LiveSessionSnapshot? GetSnapshot(string directory, int tailCharacters)
+    {
         var key = Path.GetFullPath(directory);
 
         lock (_lock)
@@ -80,7 +88,7 @@ public sealed class LiveSessionRegistry
 
             lock (entry.Lock)
             {
-                return new LiveSessionSnapshot(entry.State.CreateSnapshot(), entry.IsConnected, entry.LastMessageAt, entry.State.EndedState, entry.State.ErrorMessage);
+                return new LiveSessionSnapshot(entry.State.CreateSnapshot(tailCharacters), entry.IsConnected, entry.LastMessageAt, entry.State.EndedState, entry.State.ErrorMessage);
             }
         }
     }

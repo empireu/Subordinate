@@ -322,6 +322,61 @@ public class MonitorWindowTests
         Assert.DoesNotContain('\u001b', harness.Screen);
     }
 
+    [Fact]
+    public void AppendedMessagesLayOutLikeAFullRebuild()
+    {
+        using var harness = new WindowHarness();
+        var paths = harness.Data.CreateSession("incremental", SessionStates.Finished, DateTimeOffset.UtcNow.AddMinutes(-1), "Start the incremental task.");
+        harness.Refresh();
+        harness.OpenFirst();
+        harness.WaitForScreen(screen => screen.Contains("Start the incremental task.", StringComparison.Ordinal), "The task should load");
+
+        for (var index = 1; index <= 5; index++)
+        {
+            harness.Data.AppendMessages(paths, Assistant($"Answer {index} " + string.Join(" ", Enumerable.Repeat("words", 40))));
+            harness.WaitForScreen(screen => screen.Contains("Answer " + index, StringComparison.Ordinal), $"Answer {index} should load");
+        }
+
+        var incremental = harness.View.DetailLines.ToList();
+        harness.Key(Key.O);
+        harness.Key(Key.O);
+        harness.Refresh();
+
+        Assert.Equal(incremental, harness.View.DetailLines.ToList());
+    }
+
+    [Fact]
+    public void ResizingTheDetailViewRewrapsTheHistory()
+    {
+        using var harness = new WindowHarness();
+        harness.Data.CreateSession("rewrap", SessionStates.Finished, DateTimeOffset.UtcNow.AddMinutes(-1), string.Join(" ", Enumerable.Repeat("long", 60)));
+        harness.Refresh();
+        harness.OpenFirst();
+        harness.WaitForScreen(screen => screen.Contains("long long", StringComparison.Ordinal), "The task should load");
+
+        harness.Draw(60, 30);
+        harness.Controller.Refresh();
+        harness.Draw(60, 30);
+
+        var width = harness.View.DetailList.Viewport.Width;
+        Assert.True(width < 60, $"The detail list should be narrower than the terminal, got {width}.");
+        Assert.All(harness.View.DetailLines, line => Assert.True(line.Length <= width, $"\"{line}\" is wider than {width}."));
+    }
+
+    [Fact]
+    public void AnUnreadableTranscriptLineIsSkippedAndReported()
+    {
+        using var harness = new WindowHarness();
+        var paths = harness.Data.CreateSession("broken-line", SessionStates.Finished, DateTimeOffset.UtcNow.AddMinutes(-1), "Task before the bad line.");
+        harness.Data.AppendUnreadableLine(paths);
+        harness.Data.AppendMessages(paths, Assistant("Answer after the bad line."));
+        harness.Refresh();
+        harness.OpenFirst();
+
+        harness.WaitForScreen(screen => screen.Contains("Answer after the bad line.", StringComparison.Ordinal), "Messages after the bad line should load");
+        Assert.Contains("1 transcript line could not be read", harness.Screen);
+    }
+
     private static ChatMessage Assistant(string text)
     {
         return new ChatMessage { Role = ChatRole.Assistant, Contents = [new TextContent { Text = text }] };

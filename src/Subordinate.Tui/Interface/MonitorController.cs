@@ -13,6 +13,10 @@ namespace Subordinate.Tui.Interface;
 
 public sealed class MonitorController
 {
+    private const int HintTailFactor = 4;
+    private const int MinimumHintTailCharacters = 256;
+    private static readonly TimeSpan RegistryCleanupInterval = TimeSpan.FromSeconds(10);
+
     private readonly MonitorWindow _window;
     private readonly SessionCatalog _catalog;
     private readonly LiveSessionRegistry _registry;
@@ -22,6 +26,7 @@ public sealed class MonitorController
     private readonly List<SessionSummary> _sessions = [];
     private readonly List<ChatMessage> _messages = [];
     private readonly List<HistoryBlock> _blocks = [];
+    private readonly List<HistoryLine> _historyLines = [];
     private readonly List<HistoryLine> _detailLineInfo = [];
     private readonly HistoryFormatState _formatState = new();
 
@@ -32,17 +37,20 @@ public sealed class MonitorController
     private bool _showReasoning;
     private bool _expandOutputs;
     private bool _follow = true;
-    private bool _historyDirty;
+    private bool _relayout;
     private string? _titleState;
     private int _spinner;
-    private int _lastWidth = -1;
+    private int _layoutWidth = -1;
+    private int _laidOutBlocks;
     private int _liveLineCount;
     private int _followSelection = -1;
     private long _catalogVersion = -1;
     private long _registryVersion = -1;
     private long _historyVersion = -1;
     private DateTimeOffset _lastRowRefresh = DateTimeOffset.MinValue;
+    private DateTimeOffset _lastRegistryCleanup = DateTimeOffset.MinValue;
     private string? _notice;
+    private string? _historyNotice;
 
     public MonitorController(
         MonitorWindow window,
@@ -80,11 +88,23 @@ public sealed class MonitorController
         {
             _sessions.Clear();
             _sessions.AddRange(SessionSelection.FilterAndSort(snapshot.Sessions, _showAll, now));
-            RebuildRows(width, now);
+
+            // The detail view hides the rows, and closing it forces a rebuild:
+            if (!_detailOpen)
+            {
+                RebuildRows(width, now);
+            }
+
             _catalogVersion = snapshot.Version;
             _registryVersion = _registry.Version;
             _lastRowRefresh = now;
             _spinner++;
+        }
+
+        if (now - _lastRegistryCleanup >= RegistryCleanupInterval)
+        {
+            _registry.Cleanup(now);
+            _lastRegistryCleanup = now;
         }
 
         if (_detailOpen)
@@ -122,16 +142,12 @@ public sealed class MonitorController
         _selectedName = session.Name;
         _detailOpen = true;
         _history.Open(session.Directory);
-        _messages.Clear();
-        _blocks.Clear();
-        _formatState.Reset();
-        _historyVersion = -1;
-        _lastWidth = -1;
-        _historyDirty = true;
+        ClearHistory();
         _follow = true;
         _followSelection = -1;
         _titleState = null;
         _notice = null;
+        _historyNotice = null;
         _window.ShowDetail();
         Refresh();
     }
@@ -140,11 +156,8 @@ public sealed class MonitorController
     {
         _detailOpen = false;
         _history.Close();
-        _messages.Clear();
-        _blocks.Clear();
-        _formatState.Reset();
-        _historyVersion = -1;
-        _lastWidth = -1;
+        ClearHistory();
+        _historyNotice = null;
         _liveLineCount = 0;
         _window.DetailLines.Clear();
         _detailLineInfo.Clear();
@@ -227,9 +240,21 @@ public sealed class MonitorController
         }
     }
 
+    private void ClearHistory()
+    {
+        _messages.Clear();
+        _blocks.Clear();
+        _historyLines.Clear();
+        _formatState.Reset();
+        _historyVersion = -1;
+        _laidOutBlocks = 0;
+        _layoutWidth = -1;
+        _relayout = true;
+    }
+
     private int ResolveWidth()
     {
-        var width = _window.List.Viewport.Width;
+        var width = _detailOpen && _window.DetailList.Viewport.Width > 0 ? _window.DetailList.Viewport.Width : _window.List.Viewport.Width;
         return width > 0 ? width : 120;
     }
 
@@ -238,16 +263,18 @@ public sealed class MonitorController
         var rows = new List<string>(_sessions.Count);
         var activityWidth = SessionRowFormatter.ActivityWidth(width);
 
+        var tailCharacters = Math.Max(MinimumHintTailCharacters, activityWidth * HintTailFactor);
+
         foreach (var session in _sessions)
         {
-            var live = _registry.GetSnapshot(session.Directory);
+            var live = _registry.GetSnapshot(session.Directory, tailCharacters);
             var activity = ActivityHint.Format(session, live, now, activityWidth);
             rows.Add(SessionRowFormatter.FormatRow(session, live?.IsConnected == true, activity, _spinner, width, now));
         }
 
-        _window.Header.Text = _sessions.Count == 0
+        SetTextIfChanged(_window.Header, _sessions.Count == 0
             ? $"No sessions in {_window.Home}."
-            : SessionRowFormatter.FormatHeader(width);
+            : SessionRowFormatter.FormatHeader(width));
         ReplaceRows(rows);
 
         var selectedIndex = -1;
@@ -276,6 +303,7 @@ public sealed class MonitorController
 
     private void ReplaceRows(IReadOnlyList<string> rows)
     {
+        var changed = false;
         _window.List.SuspendCollectionChangedEvent();
 
         try
@@ -283,6 +311,7 @@ public sealed class MonitorController
             while (_window.Rows.Count > rows.Count)
             {
                 _window.Rows.RemoveAt(_window.Rows.Count - 1);
+                changed = true;
             }
 
             for (var index = 0; index < rows.Count; index++)
@@ -292,17 +321,19 @@ public sealed class MonitorController
                     if (_window.Rows[index] != rows[index])
                     {
                         _window.Rows[index] = rows[index];
+                        changed = true;
                     }
                 }
                 else
                 {
                     _window.Rows.Add(rows[index]);
+                    changed = true;
                 }
             }
         }
         finally
         {
-            ResumeList(_window.List);
+            ResumeList(_window.List, changed);
         }
     }
 
@@ -328,6 +359,7 @@ public sealed class MonitorController
         UpdateDetailHeader(session, live, now);
         _history.RequestRefresh(live?.State.TranscriptCount);
         var history = _history.TakeChanges();
+        _historyNotice = history.Notice;
 
         if (history.Version != _historyVersion)
         {
@@ -336,6 +368,7 @@ public sealed class MonitorController
                 _messages.Clear();
                 _blocks.Clear();
                 _formatState.Reset();
+                _relayout = true;
             }
 
             if (history.NewMessages.Count > 0)
@@ -345,28 +378,55 @@ public sealed class MonitorController
             }
 
             _historyVersion = history.Version;
-            _historyDirty = true;
         }
 
-        if (_historyDirty || width != _lastWidth)
+        var liveLines = FormatLiveLines(live, width, now);
+
+        if (_relayout || width != _layoutWidth)
         {
-            RebuildDetailLines(live, width, now);
-            _historyDirty = false;
-            _lastWidth = width;
+            _historyLines.Clear();
+            HistoryLayout.Append(_blocks, width, false, _historyLines);
+            _laidOutBlocks = _blocks.Count;
+            _layoutWidth = width;
+            _relayout = false;
+            ReplaceDetailLines(liveLines);
         }
         else
         {
-            UpdateLiveSection(live, width, now);
+            var firstNewLine = _historyLines.Count;
+
+            if (_laidOutBlocks < _blocks.Count)
+            {
+                HistoryLayout.Append(_blocks.Skip(_laidOutBlocks), width, false, _historyLines);
+                _laidOutBlocks = _blocks.Count;
+            }
+
+            UpdateDetailTail(firstNewLine, liveLines);
         }
 
         if (_follow && _window.DetailLines.Count > 0)
         {
-            _followSelection = _window.DetailLines.Count - 1;
-            _window.DetailList.SelectedItem = _followSelection;
-            _window.DetailList.EnsureSelectedItemVisible();
+            FollowToEnd();
         }
 
         UpdateFooter(snapshot, _sessions);
+    }
+
+    private void FollowToEnd()
+    {
+        var last = _window.DetailLines.Count - 1;
+        var viewport = _window.DetailList.Viewport;
+        _followSelection = last;
+
+        if (_window.DetailList.SelectedItem != last)
+        {
+            _window.DetailList.SelectedItem = last;
+            _window.DetailList.EnsureSelectedItemVisible();
+        }
+        else if (viewport.Height > 0 && (viewport.Y + viewport.Height <= last || viewport.Y > last))
+        {
+            _window.DetailList.EnsureSelectedItemVisible();
+        }
     }
 
     /// <summary>
@@ -399,9 +459,14 @@ public sealed class MonitorController
         }
     }
 
-    private static void ResumeList(ListView list)
+    private static void ResumeList(ListView list, bool changed)
     {
         list.ResumeSuspendCollectionChangedEvent();
+
+        if (!changed)
+        {
+            return;
+        }
 
         // Resuming does not replay the suppressed changes, so the scrollable size is updated here:
         list.SetContentSize(new System.Drawing.Size(Math.Max(1, list.Viewport.Width), list.Source?.Count ?? 0));
@@ -429,23 +494,22 @@ public sealed class MonitorController
         _blocks.Clear();
         _formatState.Reset();
         AppendBlocks(_messages);
-        _historyDirty = true;
+        _relayout = true;
         Refresh();
     }
 
-    private void RebuildDetailLines(LiveSessionSnapshot? live, int width, DateTimeOffset now)
+    /// <summary>
+    ///     Replaces the old live lines with the history lines laid out since the last tick, then the new live lines. Earlier lines keep their indices.
+    /// </summary>
+    private void UpdateDetailTail(int firstNewHistoryLine, IReadOnlyList<HistoryLine> liveLines)
     {
-        var lines = new List<HistoryLine>();
-        HistoryLayout.Append(_blocks, width, false, lines);
-        var liveLines = FormatLiveLines(live, width, now);
-        lines.AddRange(liveLines);
-        ReplaceDetailLines(lines);
-        _liveLineCount = liveLines.Count;
-    }
+        var newHistoryLines = _historyLines.Count - firstNewHistoryLine;
 
-    private void UpdateLiveSection(LiveSessionSnapshot? live, int width, DateTimeOffset now)
-    {
-        var liveLines = FormatLiveLines(live, width, now);
+        if (newHistoryLines == 0 && SameLiveLines(liveLines))
+        {
+            return;
+        }
+
         _window.DetailList.SuspendCollectionChangedEvent();
 
         try
@@ -458,6 +522,12 @@ public sealed class MonitorController
                 _detailLineInfo.RemoveAt(_detailLineInfo.Count - 1);
             }
 
+            for (var index = firstNewHistoryLine; index < _historyLines.Count; index++)
+            {
+                _window.DetailLines.Add(_historyLines[index].Text);
+                _detailLineInfo.Add(_historyLines[index]);
+            }
+
             foreach (var line in liveLines)
             {
                 _window.DetailLines.Add(line.Text);
@@ -466,44 +536,77 @@ public sealed class MonitorController
         }
         finally
         {
-            ResumeList(_window.DetailList);
+            ResumeList(_window.DetailList, true);
         }
 
         _liveLineCount = liveLines.Count;
     }
 
-    private void ReplaceDetailLines(IReadOnlyList<HistoryLine> lines)
+    private bool SameLiveLines(IReadOnlyList<HistoryLine> liveLines)
     {
+        if (liveLines.Count != _liveLineCount || _detailLineInfo.Count < _liveLineCount)
+        {
+            return false;
+        }
+
+        var offset = _detailLineInfo.Count - _liveLineCount;
+
+        for (var index = 0; index < liveLines.Count; index++)
+        {
+            if (_detailLineInfo[offset + index] != liveLines[index])
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    ///     Shows the whole history layout followed by the live lines, rewriting only the lines whose text changed.
+    /// </summary>
+    private void ReplaceDetailLines(IReadOnlyList<HistoryLine> liveLines)
+    {
+        var total = _historyLines.Count + liveLines.Count;
         _window.DetailList.SuspendCollectionChangedEvent();
 
         try
         {
-            while (_window.DetailLines.Count > lines.Count)
+            while (_window.DetailLines.Count > total)
             {
                 _window.DetailLines.RemoveAt(_window.DetailLines.Count - 1);
             }
 
-            for (var index = 0; index < lines.Count; index++)
+            _detailLineInfo.Clear();
+
+            for (var index = 0; index < total; index++)
             {
+                var line = index < _historyLines.Count ? _historyLines[index] : liveLines[index - _historyLines.Count];
+                _detailLineInfo.Add(line);
+
                 if (index < _window.DetailLines.Count)
                 {
-                    if (_window.DetailLines[index] != lines[index].Text)
+                    if (_window.DetailLines[index] != line.Text)
                     {
-                        _window.DetailLines[index] = lines[index].Text;
+                        _window.DetailLines[index] = line.Text;
                     }
                 }
                 else
                 {
-                    _window.DetailLines.Add(lines[index].Text);
+                    _window.DetailLines.Add(line.Text);
                 }
             }
-
-            _detailLineInfo.Clear();
-            _detailLineInfo.AddRange(lines);
         }
         finally
         {
-            ResumeList(_window.DetailList);
+            ResumeList(_window.DetailList, true);
+        }
+
+        _liveLineCount = liveLines.Count;
+
+        if (_followSelection >= total)
+        {
+            _followSelection = -1;
         }
     }
 
@@ -547,8 +650,9 @@ public sealed class MonitorController
         var approval = snapshot.Sessions.Count(session => session.DisplayState == "approval");
         var input = snapshot.Sessions.Sum(session => session.SessionCounters.InputTokens);
         var output = snapshot.Sessions.Sum(session => session.SessionCounters.OutputTokens);
-        var notice = _notice != null ? _notice + " | " : string.Empty;
+        var shownNotice = _detailOpen ? _historyNotice : _notice;
+        var notice = shownNotice != null ? shownNotice + " | " : string.Empty;
         var keys = _detailOpen ? "esc back  r reasoning  o outputs  f follow  q back" : "enter open  a all  q quit";
-        _window.Footer.Text = $"{notice}{running} running, {approval} awaiting approval, {sessions.Count} shown of {snapshot.Sessions.Count} | in {Units.FormatTokens(input)} out {Units.FormatTokens(output)} | live: {_server.Status} | {keys}";
+        SetTextIfChanged(_window.Footer, $"{notice}{running} running, {approval} awaiting approval, {sessions.Count} shown of {snapshot.Sessions.Count} | in {Units.FormatTokens(input)} out {Units.FormatTokens(output)} | live: {_server.Status} | {keys}");
     }
 }

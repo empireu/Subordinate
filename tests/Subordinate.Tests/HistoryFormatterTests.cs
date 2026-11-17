@@ -133,6 +133,32 @@ public class HistoryFormatterTests
         Assert.Empty(HistoryFormatter.FormatLive(ended, Now, 40));
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void TheLiveTailMatchesWrappingTheWholeText(bool paragraphs)
+    {
+        var random = new Random(42);
+        var words = new[] { "the", "model", "considers", "a", "reasonably", "long", "sentence", "about", "builds", "and", "tests" };
+        var builder = new System.Text.StringBuilder();
+
+        while (builder.Length < 30_000)
+        {
+            builder.Append(words[random.Next(words.Length)]);
+            builder.Append(paragraphs && random.Next(40) == 0 ? "\n\n" : " ");
+        }
+
+        var text = builder.ToString();
+
+        foreach (var width in new[] { 38, 78, 118 })
+        {
+            var all = TextWrap.Wrap(text, width, 0);
+            var expected = string.Join("\n", all.Skip(all.Count - HistoryFormatter.LiveTailLines));
+
+            Assert.Equal(expected, HistoryFormatter.TailLines(text, width, HistoryFormatter.LiveTailLines));
+        }
+    }
+
     [Fact]
     public void EscapeCharactersInToolResultsAreSanitized()
     {
