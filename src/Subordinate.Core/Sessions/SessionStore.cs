@@ -230,7 +230,15 @@ public sealed class SessionStore
     {
         try
         {
-            var record = JsonSerializer.Deserialize<SessionRecord>(File.ReadAllText(paths.RecordFile, Encoding.UTF8), RecordJsonOptions);
+            string content;
+
+            using (var stream = new FileStream(paths.RecordFile, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+            using (var reader = new StreamReader(stream, Encoding.UTF8))
+            {
+                content = reader.ReadToEnd();
+            }
+
+            var record = JsonSerializer.Deserialize<SessionRecord>(content, RecordJsonOptions);
 
             if (record == null || record.Schema != 1)
             {
@@ -259,7 +267,35 @@ public sealed class SessionStore
     {
         var temporary = path + ".tmp";
         File.WriteAllText(temporary, content, new UTF8Encoding(false));
-        File.Move(temporary, path, true);
+
+        for (var attempt = 1; ; attempt++)
+        {
+            try
+            {
+                // File.Replace succeeds while a reader holds the target open with FileShare.Delete, unlike File.Move:
+                if (OperatingSystem.IsWindows() && File.Exists(path))
+                {
+                    try
+                    {
+                        File.Replace(temporary, path, null, true);
+                    }
+                    catch (FileNotFoundException)
+                    {
+                        File.Move(temporary, path, true);
+                    }
+                }
+                else
+                {
+                    File.Move(temporary, path, true);
+                }
+
+                return;
+            }
+            catch (Exception ex) when (attempt < 10 && (ex is IOException or UnauthorizedAccessException) && ex is not FileNotFoundException && ex is not DirectoryNotFoundException)
+            {
+                Thread.Sleep(25);
+            }
+        }
     }
 
     /// <summary>
@@ -277,7 +313,7 @@ public sealed class SessionStore
         byte[] bytes;
         try
         {
-            using var stream = new FileStream(paths.TranscriptFile, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using var stream = new FileStream(paths.TranscriptFile, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
 
             if (stream.Length < pointer.Bytes)
             {
