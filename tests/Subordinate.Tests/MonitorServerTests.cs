@@ -186,10 +186,29 @@ public class MonitorServerTests
 
     private static async Task<Socket> ConnectAsync(string path)
     {
-        var socket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        await socket.ConnectAsync(new UnixDomainSocketEndPoint(path), timeout.Token);
-        return socket;
+
+        while (true)
+        {
+            var socket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
+
+            try
+            {
+                await socket.ConnectAsync(new UnixDomainSocketEndPoint(path), timeout.Token);
+                return socket;
+            }
+            // Linux refuses a connect at once while the listen backlog is full:
+            catch (SocketException ex) when (ex.SocketErrorCode is SocketError.WouldBlock or SocketError.TryAgain && !timeout.IsCancellationRequested)
+            {
+                socket.Dispose();
+                await Task.Delay(10, timeout.Token);
+            }
+            catch (Exception)
+            {
+                socket.Dispose();
+                throw;
+            }
+        }
     }
 
     private static async Task SendAsync(Socket socket, MonitorMessage message)
