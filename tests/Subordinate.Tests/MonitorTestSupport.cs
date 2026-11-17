@@ -2,8 +2,11 @@ using System.Collections.Concurrent;
 using System.Net.Sockets;
 using System.Runtime.CompilerServices;
 using System.Text;
+using System.Text.Json;
 using KnowledgeSystem.Ai.Providers.Abstractions;
 using Subordinate.Core.Monitoring;
+using Subordinate.Core.Output;
+using Subordinate.Core.Sessions;
 
 namespace Subordinate.Tests;
 
@@ -298,3 +301,106 @@ internal static class MonitorTestWait
         throw new TimeoutException(message);
     }
 }
+
+internal sealed class TuiTestHome : IDisposable
+{
+    public TuiTestHome()
+    {
+        Root = Path.Combine(Path.GetTempPath(), "subordinate-tests", Guid.NewGuid().ToString("N"));
+        Home = Path.Combine(Root, "home");
+        Workdir = Path.Combine(Root, "work");
+        Directory.CreateDirectory(Home);
+        Directory.CreateDirectory(Workdir);
+        Store = new SessionStore(Home);
+    }
+
+    public string Root { get; }
+
+    public string Home { get; }
+
+    public string Workdir { get; }
+
+    public SessionStore Store { get; }
+
+    public SessionPaths CreateSession(string name, string state, DateTimeOffset updatedAt, string task = "Do the task.", long contextTokens = 0)
+    {
+        var record = NewRecord(name, state, updatedAt, contextTokens);
+        var paths = Store.Create(record);
+        record.Transcript = Store.AppendTranscript(paths, record.Transcript,
+        [
+            new ChatMessage { Role = ChatRole.System, Contents = [new TextContent { Text = "You are a test subagent." }] },
+            new ChatMessage { Role = ChatRole.User, Contents = [new TextContent { Text = task }] }
+        ]);
+        record.UpdatedAt = updatedAt;
+        File.WriteAllText(paths.RecordFile, JsonSerializer.Serialize(record, SessionStore.RecordJsonOptions));
+        return paths;
+    }
+
+    public SessionPaths CreateRunningSession(string name, DateTimeOffset startedAt, long contextTokens = 0)
+    {
+        var record = NewRecord(name, SessionStates.Running, DateTimeOffset.UtcNow, contextTokens);
+        var paths = Store.Create(record);
+        var runId = Store.CreateRunDirectory(paths, 1, 10);
+        record.Runs.Add(new RunRecord { RunId = runId, Kind = "start", StartedAt = startedAt, State = SessionStates.Running });
+        record.Transcript = Store.AppendTranscript(paths, record.Transcript,
+        [
+            new ChatMessage { Role = ChatRole.System, Contents = [new TextContent { Text = "You are a test subagent." }] },
+            new ChatMessage { Role = ChatRole.User, Contents = [new TextContent { Text = "Do the running task." }] }
+        ]);
+        record.UpdatedAt = DateTimeOffset.UtcNow;
+        File.WriteAllText(paths.RecordFile, JsonSerializer.Serialize(record, SessionStore.RecordJsonOptions));
+        RunArtifacts.WriteStatus(paths.RunDirectory(runId), new StatusSnapshot
+        {
+            Session = record.Name,
+            Workdir = record.Workdir,
+            RunId = runId,
+            State = SessionStates.Running,
+            ProcessId = 1234,
+            StartedAt = startedAt,
+            ElapsedSeconds = 12.5,
+            PendingCount = 0,
+            RunCounters = record.CurrentRun!.Counters,
+            SessionCounters = record.Counters,
+            TurnsRemaining = 5,
+            LastActivity = "waiting for the model",
+            ContextTokens = contextTokens
+        });
+        return paths;
+    }
+
+    public void AppendMessages(SessionPaths paths, params ChatMessage[] messages)
+    {
+        var record = Store.Load(paths);
+        record.Transcript = Store.AppendTranscript(paths, record.Transcript, messages);
+        Store.Save(paths, record);
+    }
+
+    public void Dispose()
+    {
+        try
+        {
+            Directory.Delete(Root, true);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+        }
+    }
+
+    private SessionRecord NewRecord(string name, string state, DateTimeOffset updatedAt, long contextTokens)
+    {
+        return new SessionRecord
+        {
+            Name = name,
+            Workdir = Workdir,
+            CreatedAt = updatedAt,
+            UpdatedAt = updatedAt,
+            Shell = new ShellRecord { Kind = "bash", Dialect = "bash", ExecutablePath = "bash.exe", Version = "5.2.26" },
+            Model = new ModelRecord { Alias = "test", Provider = "test", ModelId = "scripted" },
+            Policy = ["readonly"],
+            Limits = new LimitsRecord { MaxTurns = 20, MaxMinutes = 5, ShellTimeoutSeconds = 30 },
+            State = state,
+            ContextTokens = contextTokens
+        };
+    }
+}
+

@@ -34,14 +34,20 @@ internal static class Program
                 return 2;
             }
 
-            if (!options.Print)
+            if (options.Print)
             {
-                Console.Error.WriteLine("The interactive monitor is not implemented yet.");
-                return 1;
+                try
+                {
+                    return TuiPrint.Run(options, Console.Out);
+                }
+                catch (TuiException ex)
+                {
+                    Console.Error.WriteLine(ex.Message);
+                    return ex.ExitCode;
+                }
             }
 
-            Console.Error.WriteLine("--print is not implemented yet.");
-            return 1;
+            return MonitorApp.Run(options);
         }
         catch (Exception ex)
         {
