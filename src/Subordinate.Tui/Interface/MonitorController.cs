@@ -56,7 +56,8 @@ public sealed class MonitorController
         LiveSessionRegistry registry,
         HistoryLoader history,
         MonitorServer server,
-        Func<string, int?> contextWindowLookup)
+        Func<string, int?> contextWindowLookup,
+        bool showAll = false)
     {
         _window = window;
         _catalog = catalog;
@@ -64,6 +65,7 @@ public sealed class MonitorController
         _history = history;
         _server = server;
         _contextWindowLookup = contextWindowLookup;
+        _showAll = showAll;
         _window.List.RowRender += (_, args) => args.RowAttribute = ListAttribute(args.Row);
         _window.DetailList.RowRender += (_, args) => args.RowAttribute = DetailAttribute(args.Row);
     }
@@ -75,15 +77,15 @@ public sealed class MonitorController
         var now = DateTimeOffset.UtcNow;
         var snapshot = _catalog.Snapshot;
         var width = ResolveWidth();
-        var sessions = SessionSelection.FilterAndSort(snapshot.Sessions, _showAll, now);
-        _sessions.Clear();
-        _sessions.AddRange(sessions);
+        RememberListSelection();
         var rebuild = snapshot.Version != _catalogVersion
             || _registry.Version != _registryVersion
             || now - _lastRowRefresh >= TimeSpan.FromSeconds(1);
 
         if (rebuild)
         {
+            _sessions.Clear();
+            _sessions.AddRange(SessionSelection.FilterAndSort(snapshot.Sessions, _showAll, now));
             RebuildRows(width, now);
             _catalogVersion = snapshot.Version;
             _registryVersion = _registry.Version;
@@ -93,12 +95,23 @@ public sealed class MonitorController
 
         if (_detailOpen)
         {
-            RefreshDetail(width, now);
+            RefreshDetail(snapshot, width, now);
         }
         else
         {
-            UpdateFooter(snapshot, sessions);
+            UpdateFooter(snapshot, _sessions);
         }
+    }
+
+    private void RememberListSelection()
+    {
+        if (_detailOpen || _window.List.SelectedItem is not int index || index < 0 || index >= _sessions.Count)
+        {
+            return;
+        }
+
+        _selectedDirectory = _sessions[index].Directory;
+        _selectedName = _sessions[index].Name;
     }
 
     public void OpenSelected()
@@ -141,6 +154,7 @@ public sealed class MonitorController
         _detailKinds.Clear();
         _window.ShowList();
         _notice = notice;
+        _catalogVersion = -1;
         Refresh();
     }
 
@@ -240,6 +254,13 @@ public sealed class MonitorController
             selectedIndex = _sessions.FindIndex(session => string.Equals(session.Directory, _selectedDirectory, PlatformServices.Current.Paths.Comparison));
         }
 
+        // The open session keeps its identity even when it leaves the list, so the detail view can detect a deletion:
+        if (_detailOpen)
+        {
+            _window.List.SelectedItem = selectedIndex >= 0 ? selectedIndex : null;
+            return;
+        }
+
         if (selectedIndex < 0)
         {
             selectedIndex = _sessions.Count > 0 ? 0 : -1;
@@ -282,11 +303,11 @@ public sealed class MonitorController
         }
     }
 
-    private void RefreshDetail(int width, DateTimeOffset now)
+    private void RefreshDetail(CatalogSnapshot snapshot, int width, DateTimeOffset now)
     {
         var session = _selectedDirectory == null
             ? null
-            : _sessions.FirstOrDefault(candidate => string.Equals(candidate.Directory, _selectedDirectory, PlatformServices.Current.Paths.Comparison));
+            : snapshot.Sessions.FirstOrDefault(candidate => string.Equals(candidate.Directory, _selectedDirectory, PlatformServices.Current.Paths.Comparison));
 
         if (session == null)
         {
@@ -303,7 +324,7 @@ public sealed class MonitorController
 
         _window.DetailHeader.Text = string.Join("\n", DetailHeaderFormatter.Format(session, live, _contextWindowLookup(session.ModelAlias), now));
         _history.RequestRefresh(live?.State.TranscriptCount);
-        var history = _history.Snapshot;
+        var history = _history.TakeChanges();
 
         if (history.Version != _historyVersion)
         {
@@ -341,7 +362,7 @@ public sealed class MonitorController
             _window.DetailList.EnsureSelectedItemVisible();
         }
 
-        UpdateFooter(_catalog.Snapshot, _sessions);
+        UpdateFooter(snapshot, _sessions);
     }
 
     private void AppendBlocks(IReadOnlyList<ChatMessage> messages)

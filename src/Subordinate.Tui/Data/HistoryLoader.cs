@@ -23,7 +23,7 @@ public sealed class HistoryLoader : IDisposable
     private long _recordLength = -1;
     private int _recordCount;
     private long _version;
-    private IReadOnlyList<ChatMessage> _newMessages = [];
+    private readonly List<ChatMessage> _pendingMessages = [];
     private string? _notice;
     private bool _reset;
     private bool _loading;
@@ -31,14 +31,17 @@ public sealed class HistoryLoader : IDisposable
     private bool _disposed;
     private Task? _refreshTask;
 
-    public HistorySnapshot Snapshot
+    /// <summary>
+    ///     Returns the messages loaded since the previous call and forgets them. A reset means earlier messages must be discarded first.
+    /// </summary>
+    public HistorySnapshot TakeChanges()
     {
-        get
+        lock (_lock)
         {
-            lock (_lock)
-            {
-                return new HistorySnapshot(_directory, _newMessages, _recordCount, _version, _notice, _reset, _loading);
-            }
+            var snapshot = new HistorySnapshot(_directory, _pendingMessages.ToArray(), _recordCount, _version, _notice, _reset, _loading);
+            _pendingMessages.Clear();
+            _reset = false;
+            return snapshot;
         }
     }
 
@@ -51,7 +54,7 @@ public sealed class HistoryLoader : IDisposable
             _recordWriteTimeUtc = default;
             _recordLength = -1;
             _recordCount = 0;
-            _newMessages = [];
+            _pendingMessages.Clear();
             _notice = null;
             _reset = true;
             _loading = true;
@@ -70,7 +73,7 @@ public sealed class HistoryLoader : IDisposable
             _recordWriteTimeUtc = default;
             _recordLength = -1;
             _recordCount = 0;
-            _newMessages = [];
+            _pendingMessages.Clear();
             _notice = null;
             _reset = false;
             _loading = false;
@@ -197,9 +200,15 @@ public sealed class HistoryLoader : IDisposable
                 _recordCount = refresh.Reset ? refresh.Messages.Count : _recordCount + refresh.Messages.Count;
                 _recordWriteTimeUtc = writeTime;
                 _recordLength = length;
-                _newMessages = refresh.Messages;
+
+                if (refresh.Reset)
+                {
+                    _pendingMessages.Clear();
+                    _reset = true;
+                }
+
+                _pendingMessages.AddRange(refresh.Messages);
                 _notice = refresh.Notice;
-                _reset = refresh.Reset;
                 _loading = false;
                 _version++;
             }
@@ -222,7 +231,6 @@ public sealed class HistoryLoader : IDisposable
     {
         lock (_lock)
         {
-            _newMessages = [];
             _notice = notice;
             _loading = false;
             _version++;

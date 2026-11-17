@@ -75,6 +75,27 @@ public class MonitorWindowTests
     }
 
     [Fact]
+    public void TheSelectionSurvivesARefresh()
+    {
+        using var harness = new WindowHarness();
+        var now = DateTimeOffset.UtcNow;
+        harness.Data.CreateRunningSession("alpha", now.AddSeconds(-30));
+        harness.Data.CreateSession("beta", SessionStates.Finished, now.AddMinutes(-2), "Do the beta task.");
+        harness.Data.CreateSession("gamma", SessionStates.Finished, now.AddMinutes(-4), "Do the gamma task.");
+        harness.Refresh();
+
+        harness.Key(Key.CursorDown);
+        harness.Key(Key.CursorDown);
+        harness.Refresh();
+        harness.Refresh();
+
+        Assert.Equal(2, harness.View.List.SelectedItem);
+
+        harness.Key(Key.Enter);
+        harness.WaitForScreen(screen => screen.Contains("Do the gamma task.", StringComparison.Ordinal), "The gamma task should appear in the detail view");
+    }
+
+    [Fact]
     public void EscapeReturnsToTheListAndThenQuits()
     {
         using var harness = new WindowHarness();
@@ -120,6 +141,16 @@ public class MonitorWindowTests
         Assert.DoesNotContain("old-finished", harness.Screen);
 
         harness.Key(Key.A);
+
+        Assert.Contains("old-finished", harness.Screen);
+    }
+
+    [Fact]
+    public void TheAllOptionShowsAnOldFinishedSession()
+    {
+        using var harness = new WindowHarness(true);
+        harness.Data.CreateSession("old-finished", SessionStates.Finished, DateTimeOffset.UtcNow.AddDays(-2));
+        harness.Refresh();
 
         Assert.Contains("old-finished", harness.Screen);
     }
@@ -206,7 +237,28 @@ public class MonitorWindowTests
         harness.Draw();
 
         Assert.False(harness.Controller.DetailOpen);
-        Assert.Contains("was deleted", harness.Screen);
+        Assert.Contains("session doomed was deleted", harness.Screen);
+    }
+
+    [Fact]
+    public void DeletingTheOpenSessionAmongOthersReturnsToTheList()
+    {
+        using var harness = new WindowHarness();
+        var now = DateTimeOffset.UtcNow;
+        harness.Data.CreateSession("keeper", SessionStates.Finished, now.AddMinutes(-5), "Keep this task.");
+        var paths = harness.Data.CreateSession("doomed", SessionStates.Finished, now.AddMinutes(-1), "Doomed task.");
+        harness.Refresh();
+        harness.OpenFirst();
+        harness.WaitForScreen(screen => screen.Contains("Doomed task.", StringComparison.Ordinal), "The doomed task should load");
+
+        Directory.Delete(paths.Directory, true);
+        harness.Catalog.PollOnce();
+        harness.Controller.Refresh();
+        harness.Draw();
+
+        Assert.False(harness.Controller.DetailOpen);
+        Assert.Contains("session doomed was deleted", harness.Screen);
+        Assert.Contains("keeper", harness.Screen);
     }
 
     [Fact]
@@ -231,7 +283,7 @@ public class MonitorWindowTests
         private readonly IApplication _app;
         private readonly SessionToken? _token;
 
-        public WindowHarness()
+        public WindowHarness(bool showAll = false)
         {
             Data = new TuiTestHome();
             Registry = new LiveSessionRegistry();
@@ -241,7 +293,7 @@ public class MonitorWindowTests
             _app = Application.Create(new VirtualTimeProvider());
             _app.Init(DriverRegistry.Names.ANSI);
             View = new MonitorWindow(Data.Home);
-            Controller = new MonitorController(View, Catalog, Registry, History, Server, _ => 200_000);
+            Controller = new MonitorController(View, Catalog, Registry, History, Server, _ => 200_000, showAll);
             View.Window.KeyDown += (_, key) => Controller.HandleKey(key);
             View.List.Accepting += (_, args) =>
             {

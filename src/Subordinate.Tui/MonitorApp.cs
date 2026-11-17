@@ -32,7 +32,7 @@ internal static class MonitorApp
         var catalog = new SessionCatalog(home, directory => registry.IsConnected(directory));
         using var history = new HistoryLoader();
         using var window = new MonitorWindow(home);
-        var controller = new MonitorController(window, catalog, registry, history, server, alias => ResolveContextWindow(config, alias));
+        var controller = new MonitorController(window, catalog, registry, history, server, alias => ResolveContextWindow(config, alias), options.All);
         using var cancellation = new CancellationTokenSource();
         var poll = Task.Run(async () =>
         {

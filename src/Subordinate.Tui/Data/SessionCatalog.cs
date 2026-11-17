@@ -114,19 +114,27 @@ public sealed class SessionCatalog
         var unreadable = 0;
         var seen = new HashSet<string>(PlatformServices.Current.Paths.Comparer);
 
-        if (Directory.Exists(_sessionsDirectory))
+        try
         {
-            foreach (var directory in Directory.EnumerateDirectories(_sessionsDirectory))
+            if (Directory.Exists(_sessionsDirectory))
             {
-                var fullDirectory = Path.GetFullPath(directory);
-                seen.Add(fullDirectory);
-                var summary = PollSession(fullDirectory, ref unreadable);
-
-                if (summary != null)
+                foreach (var directory in Directory.EnumerateDirectories(_sessionsDirectory))
                 {
-                    summaries.Add(summary);
+                    var fullDirectory = Path.GetFullPath(directory);
+                    seen.Add(fullDirectory);
+                    var summary = PollSession(fullDirectory, ref unreadable);
+
+                    if (summary != null)
+                    {
+                        summaries.Add(summary);
+                    }
                 }
             }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // A partial listing would look like deleted sessions, so the previous snapshot stays until the next poll:
+            return;
         }
 
         lock (_cache)
