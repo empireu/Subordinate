@@ -1,0 +1,61 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <OutputType>Exe</OutputType>
+        <TargetFramework>net11.0</TargetFramework>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+        <AssemblyName>subordinate-tui</AssemblyName>
+        <RootNamespace>Subordinate.Tui</RootNamespace>
+        <InvariantGlobalization>true</InvariantGlobalization>
+        <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
+    </PropertyGroup>
+
+    <PropertyGroup>
+        <SubordinateHomeDirectory Condition="'$(SUBORDINATE_HOME)' != ''">$(SUBORDINATE_HOME)</SubordinateHomeDirectory>
+        <SubordinateHomeDirectory Condition="'$(SUBORDINATE_HOME)' == ''">$(USERPROFILE)\.subordinate</SubordinateHomeDirectory>
+        <SubordinateDeployDirectory>$(SubordinateHomeDirectory)\bin\tui\</SubordinateDeployDirectory>
+        <SubordinatePublishDirectory>$(MSBuildProjectDirectory)\obj\deploy\$(Configuration)\</SubordinatePublishDirectory>
+    </PropertyGroup>
+
+    <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('Linux'))">
+        <SubordinateLinuxRuntime Condition="'$([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)' == 'Arm64'">linux-arm64</SubordinateLinuxRuntime>
+        <SubordinateLinuxRuntime Condition="'$(SubordinateLinuxRuntime)' == ''">linux-x64</SubordinateLinuxRuntime>
+        <RuntimeIdentifiers>$(SubordinateLinuxRuntime)</RuntimeIdentifiers>
+        <SubordinateHomeDirectory Condition="'$(SUBORDINATE_HOME)' == ''">$(HOME)/.subordinate</SubordinateHomeDirectory>
+        <SubordinateDeployDirectory>$(SubordinateHomeDirectory)/bin/tui/</SubordinateDeployDirectory>
+        <SubordinatePublishDirectory>$(MSBuildProjectDirectory)/obj/deploy/$(Configuration)/</SubordinatePublishDirectory>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <InternalsVisibleTo Include="Subordinate.Tests" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <PackageReference Include="Terminal.Gui" Version="[2.5.0]" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <ProjectReference Include="..\Subordinate.Core\Subordinate.Core.csproj" />
+    </ItemGroup>
+
+    <Target Name="DeployTuiToSubordinateHome" AfterTargets="Build" Condition="'$(SubordinateDeploying)' != 'true' And '$(OS)' == 'Windows_NT'">
+        <MSBuild Projects="$(MSBuildProjectFullPath)" Targets="Publish" Properties="Configuration=$(Configuration);RuntimeIdentifier=win-x64;SelfContained=true;PublishDir=$(SubordinatePublishDirectory);SubordinateDeploying=true" />
+        <ItemGroup>
+            <SubordinateTuiPublishedFiles Include="$(SubordinatePublishDirectory)**\*" />
+        </ItemGroup>
+        <Copy SourceFiles="@(SubordinateTuiPublishedFiles)" DestinationFiles="@(SubordinateTuiPublishedFiles->'$(SubordinateDeployDirectory)%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" Retries="3" RetryDelayMilliseconds="500" ContinueOnError="WarnAndContinue" />
+        <Message Importance="high" Text="Deployed subordinate-tui to $(SubordinateDeployDirectory)" />
+    </Target>
+
+    <Target Name="DeployTuiToSubordinateHomeLinux" AfterTargets="Build" Condition="'$(SubordinateDeploying)' != 'true' And $([MSBuild]::IsOSPlatform('Linux'))">
+        <MSBuild Projects="$(MSBuildProjectFullPath)" Targets="Publish" Properties="Configuration=$(Configuration);RuntimeIdentifier=$(SubordinateLinuxRuntime);SelfContained=true;PublishDir=$(SubordinatePublishDirectory);SubordinateDeploying=true" />
+        <ItemGroup>
+            <SubordinateTuiPublishedFilesLinux Include="$(SubordinatePublishDirectory)**/*" />
+        </ItemGroup>
+        <Copy SourceFiles="@(SubordinateTuiPublishedFilesLinux)" DestinationFiles="@(SubordinateTuiPublishedFilesLinux->'$(SubordinateDeployDirectory)%(RecursiveDir)%(Filename)%(Extension)')" SkipUnchangedFiles="true" Retries="3" RetryDelayMilliseconds="500" ContinueOnError="WarnAndContinue" />
+        <Exec Command="chmod +x &quot;$(SubordinateDeployDirectory)subordinate-tui&quot;" />
+        <Message Importance="high" Text="Deployed subordinate-tui to $(SubordinateDeployDirectory)" />
+    </Target>
+
+</Project>

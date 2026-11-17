@@ -5,6 +5,7 @@
     <Project Path="src/KnowledgeSystem.Events/KnowledgeSystem.Events.csproj" />
     <Project Path="src/KnowledgeSystems.Extensions/KnowledgeSystems.Extensions.csproj" />
     <Project Path="src/Subordinate.Core/Subordinate.Core.csproj" />
+    <Project Path="src/Subordinate.Tui/Subordinate.Tui.csproj" />
     <Project Path="src/Subordinate/Subordinate.csproj" />
   </Folder>
   <Folder Name="/tests/">

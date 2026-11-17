@@ -20,6 +20,7 @@
     <ItemGroup>
         <ProjectReference Include="..\..\src\Subordinate.Core\Subordinate.Core.csproj" />
         <ProjectReference Include="..\..\src\Subordinate\Subordinate.csproj" AdditionalProperties="SubordinateDeploying=true" />
+        <ProjectReference Include="..\..\src\Subordinate.Tui\Subordinate.Tui.csproj" AdditionalProperties="SubordinateDeploying=true" />
         <ProjectReference Include="..\..\src\KnowledgeSystem.Agents\KnowledgeSystem.Agents.csproj" />
         <ProjectReference Include="..\..\src\KnowledgeSystem.Ai.Providers\KnowledgeSystem.Ai.Providers.csproj" />
     </ItemGroup>
