@@ -94,7 +94,7 @@ Terminals that are already open keep their old PATH. Tell the user to open a new
 
 ### 2.3 Configure the models
 
-If `config.json` does not exist in the Subordinate home yet, run `SUBORDINATE init`. It writes `config.json` and `system-prompt.md`. Then replace `config.json` with exactly this:
+If `config.json` does not exist in the Subordinate home yet, run `SUBORDINATE init`. It writes `config.json`, `system-prompt.md`, `autocompact-notice.md` and `autocompact-prompt.md`. Then replace `config.json` with exactly this:
 
 ```json
 {
@@ -102,8 +102,8 @@ If `config.json` does not exist in the Subordinate home yet, run `SUBORDINATE in
     "mistral": { "protocol": "mistral-chat-completions", "endpoint": "https://api.mistral.ai/v1", "api_key_env": "MISTRAL_API_KEY" }
   },
   "models": {
-    "deepseek-high": { "provider": "mistral", "model": "deepseek-v4-1-flash-1017", "reasoning_effort": "high" },
-    "glm-high": { "provider": "mistral", "model": "zai-glm-5-3-flash", "reasoning_effort": "high" }
+    "deepseek-high": { "provider": "mistral", "model": "deepseek-v4-1-flash-1017", "reasoning_effort": "high", "context_window": 1000000, "autocompact_threshold": 300000 },
+    "glm-high": { "provider": "mistral", "model": "zai-glm-5-3-flash", "reasoning_effort": "high", "context_window": 1000000, "autocompact_threshold": 300000 }
   },
   "default_model": "deepseek-high",
   "shells": {},
@@ -111,7 +111,7 @@ If `config.json` does not exist in the Subordinate home yet, run `SUBORDINATE in
 }
 ```
 
-Both entries must keep `reasoning_effort`. A model entry without it runs without reasoning and gives much worse results. Leave `shells` empty unless `doctor` cannot find a shell; then set `shells.bash` to the absolute path of bash.
+Both entries must keep `reasoning_effort`. A model entry without it runs without reasoning and gives much worse results. `autocompact_threshold` makes a session compact its context once it reaches 300K tokens; it must stay below `context_window`. Leave `shells` empty unless `doctor` cannot find a shell; then set `shells.bash` to the absolute path of bash.
 
 Run `SUBORDINATE doctor`. Both aliases must report an available key, and the bash line must start with `ok`. If pwsh is not installed, its line fails, which is fine.
 
