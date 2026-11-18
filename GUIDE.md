@@ -495,6 +495,8 @@ If the subagent keeps hitting the same kind of block, the policy was too narrow 
 - `list --workdir "<repo>"` shows the sessions for a repo. `delete --name <name> --workdir "<repo>"` removes one when you are done with it.
 - `usage [--since 7d] [--session <name>] [--model <alias>]` reports tokens and runs, with a breakdown by model and workdir.
 
+Long sessions compact their own context once the model's configured `autocompact_threshold` is reached: the subagent winds down, summarizes its work, and continues from that summary, while the full transcript stays on disk. A run that ends with `compaction_failed` did not produce a usable summary; `resume` it, and the next run asks for the summary again.
+
 ## Trust and verification
 
 The subagent is a different, weaker model. Treat its answer as a lead to check, not a fact to relay.

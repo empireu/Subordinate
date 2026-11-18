@@ -26,7 +26,7 @@ public sealed class MonitorController
     private readonly MonitorServer _server;
     private readonly Func<string, int?> _contextWindowLookup;
     private readonly List<SessionSummary> _sessions = [];
-    private readonly List<ChatMessage> _messages = [];
+    private readonly List<TranscriptEntry> _entries = [];
     private readonly List<HistoryBlock> _blocks = [];
     private readonly List<HistoryLine> _historyLines = [];
     private readonly List<HistoryLine> _detailLineInfo = [];
@@ -325,7 +325,7 @@ public sealed class MonitorController
 
     private void ClearHistory()
     {
-        _messages.Clear();
+        _entries.Clear();
         _blocks.Clear();
         _historyLines.Clear();
         _formatState.Reset();
@@ -446,16 +446,16 @@ public sealed class MonitorController
         {
             if (history.Reset)
             {
-                _messages.Clear();
+                _entries.Clear();
                 _blocks.Clear();
                 _formatState.Reset();
                 _relayout = true;
             }
 
-            if (history.NewMessages.Count > 0)
+            if (history.NewEntries.Count > 0)
             {
-                _messages.AddRange(history.NewMessages);
-                AppendBlocks(history.NewMessages);
+                _entries.AddRange(history.NewEntries);
+                AppendBlocks(history.NewEntries);
             }
 
             _historyVersion = history.Version;
@@ -571,11 +571,11 @@ public sealed class MonitorController
         }
     }
 
-    private void AppendBlocks(IReadOnlyList<ChatMessage> messages)
+    private void AppendBlocks(IReadOnlyList<TranscriptEntry> entries)
     {
-        foreach (var message in messages)
+        foreach (var entry in entries)
         {
-            _blocks.AddRange(HistoryFormatter.FormatMessage(message, _formatState, _showReasoning, _expandOutputs));
+            _blocks.AddRange(HistoryFormatter.FormatEntry(entry, _formatState, _showReasoning, _expandOutputs));
         }
     }
 
@@ -583,7 +583,7 @@ public sealed class MonitorController
     {
         _blocks.Clear();
         _formatState.Reset();
-        AppendBlocks(_messages);
+        AppendBlocks(_entries);
         _relayout = true;
         Refresh();
     }

@@ -14,11 +14,22 @@ public static class RunFactory
     public static SessionRunner CreateRunner(SubordinateConfig config, SessionStore store, SessionPaths paths, SessionRecord record, string runId)
     {
         var (_, model, provider) = config.ResolveModel(record.Model.Alias);
+        ValidateAutocompaction(record.Model.Alias, model, config.Defaults);
 
         if (!string.Equals(model.Model, record.Model.ModelId, StringComparison.Ordinal))
         {
             throw new SubordinateException(ErrorCode.BadModel, $"Model alias \"{record.Model.Alias}\" now points to {model.Model}, but this session started with {record.Model.ModelId}. Restore the alias or start a new session.");
         }
+
+        var (noticeText, _) = SubordinateConfig.LoadAutocompactNotice(store.Home);
+        var (requestText, _) = SubordinateConfig.LoadAutocompactPrompt(store.Home);
+        var compaction = new CompactionSettings
+        {
+            Threshold = model.AutocompactThreshold,
+            WindDownTurns = config.Defaults.AutocompactWindDownTurns,
+            NoticeText = CompactionPrompts.FormatNotice(noticeText, config.Defaults.AutocompactWindDownTurns),
+            RequestText = requestText
+        };
 
         var chatProvider = SubordinateConfig.CreateProvider(record.Model.Provider, provider, model);
 
@@ -51,6 +62,27 @@ public static class RunFactory
             record.Model.Alias,
             record.Model.ModelId,
             record.CurrentRun?.StartedAt ?? DateTimeOffset.UtcNow);
-        return new SessionRunner(store, paths, record, runId, chatProvider, config.CreateRequestOptions(model), executor, MonitorFeedFactory.Create(endpoint, runInfo));
+        return new SessionRunner(store, paths, record, runId, chatProvider, config.CreateRequestOptions(model), executor, MonitorFeedFactory.Create(endpoint, runInfo), compaction);
+    }
+
+    private static void ValidateAutocompaction(string alias, ModelEntry model, DefaultsEntry defaults)
+    {
+        if (model.AutocompactThreshold is { } threshold)
+        {
+            if (threshold < 1000)
+            {
+                throw new SubordinateException(ErrorCode.ConfigError, $"Model \"{alias}\" has autocompact_threshold {threshold}, which is below the minimum of 1000 tokens.");
+            }
+
+            if (model.ContextWindow is { } contextWindow && threshold >= contextWindow)
+            {
+                throw new SubordinateException(ErrorCode.ConfigError, $"Model \"{alias}\" has autocompact_threshold {threshold}, which must be less than its context_window of {contextWindow} tokens.");
+            }
+        }
+
+        if (defaults.AutocompactWindDownTurns is < 0 or > 50)
+        {
+            throw new SubordinateException(ErrorCode.ConfigError, $"The defaults set autocompact_wind_down_turns to {defaults.AutocompactWindDownTurns}, which must be between 0 and 50.");
+        }
     }
 }

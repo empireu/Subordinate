@@ -1,6 +1,7 @@
 using System.Globalization;
 using KnowledgeSystem.Ai.Providers.Abstractions;
 using Subordinate.Core.Running;
+using Subordinate.Core.Sessions;
 using Subordinate.Tui.Live;
 
 namespace Subordinate.Tui.Presentation;
@@ -16,7 +17,8 @@ public enum HistoryBlockKind
     ToolResult,
     ToolFailure,
     Warning,
-    Live
+    Live,
+    Compaction
 }
 
 public enum HistoryBlockRole
@@ -60,6 +62,28 @@ public static class HistoryFormatter
     public const int ExpandedOutputLines = 200;
     public const int LiveTailLines = 12;
 
+    public static IReadOnlyList<HistoryBlock> FormatEntry(TranscriptEntry entry, HistoryFormatState state, bool showReasoning, bool expandOutputs)
+    {
+        return entry switch
+        {
+            TranscriptMessageEntry messageEntry => FormatMessage(messageEntry.Message, state, showReasoning, expandOutputs),
+            TranscriptCompactionEntry compactionEntry => FormatCompaction(compactionEntry.Marker),
+            _ => []
+        };
+    }
+
+    private static IReadOnlyList<HistoryBlock> FormatCompaction(CompactionMarker marker)
+    {
+        return
+        [
+            new HistoryBlock(HistoryBlockKind.Compaction, HistoryBlockRole.Spacer, string.Empty),
+            new HistoryBlock(
+                HistoryBlockKind.Compaction,
+                HistoryBlockRole.Note,
+                $"context compacted, {marker.RemovedMessages.ToString(CultureInfo.InvariantCulture)} messages removed, about {marker.TokensBefore.ToString(CultureInfo.InvariantCulture)} tokens before")
+        ];
+    }
+
     public static IReadOnlyList<HistoryBlock> FormatMessage(ChatMessage message, HistoryFormatState state, bool showReasoning, bool expandOutputs)
     {
         var blocks = new List<HistoryBlock>();
@@ -73,6 +97,18 @@ public static class HistoryFormatter
             }
             case ChatRole.User:
             {
+                if (message.AuthorName == CompactionAuthors.Notice)
+                {
+                    AddNote(blocks, state, HistoryBlockKind.Compaction, "compaction notice");
+                    break;
+                }
+
+                if (message.AuthorName == CompactionAuthors.Request)
+                {
+                    AddNote(blocks, state, HistoryBlockKind.Compaction, "compaction summary requested");
+                    break;
+                }
+
                 var isTask = !state.SeenUser;
                 state.SeenUser = true;
                 AddCard(blocks, state, isTask ? HistoryBlockKind.Task : HistoryBlockKind.Supervisor, isTask ? "task" : "supervisor", TerminalText.Sanitize(message.GetText()), true);

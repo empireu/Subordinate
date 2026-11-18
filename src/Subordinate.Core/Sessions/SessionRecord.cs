@@ -34,6 +34,26 @@ public static class FrameStates
     public const string Deferred = "deferred";
 }
 
+public static class CompactionPhases
+{
+    public const string WindDown = "wind_down";
+    public const string Summarizing = "summarizing";
+}
+
+/// <summary>
+///     The state of a compaction that is in progress.
+/// </summary>
+public sealed class CompactionRecord
+{
+    public string Phase { get; set; } = CompactionPhases.WindDown;
+
+    public DateTimeOffset StartedAt { get; set; }
+
+    public long TokensAtStart { get; set; }
+
+    public int WindDownTurnsUsed { get; set; }
+}
+
 public sealed class ShellRecord
 {
     public string Kind { get; set; } = string.Empty;
@@ -196,6 +216,8 @@ public sealed class CountersRecord
 {
     public int ModelCalls { get; set; }
 
+    public int CompactionModelCalls { get; set; }
+
     public int ToolCalls { get; set; }
 
     public long InputTokens { get; set; }
@@ -260,6 +282,10 @@ public sealed class SessionRecord
     public CountersRecord Counters { get; set; } = new();
 
     public long ContextTokens { get; set; }
+
+    public CompactionRecord? Compaction { get; set; }
+
+    public int Compactions { get; set; }
 
     public string? FinalText { get; set; }
 

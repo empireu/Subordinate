@@ -63,10 +63,10 @@ internal static class TuiPrint
             if (options.Session != null)
             {
                 var session = ResolveSession(catalog.Snapshot.Sessions, options.Session, options.Workdir);
-                var messages = LoadMessages(session.Directory);
+                var entries = LoadEntries(session.Directory);
                 var live = registry.GetSnapshot(session.Directory);
                 var contextWindow = ResolveContextWindow(config, session.ModelAlias);
-                output.Write(PrintRenderer.RenderDetail(home, feedStatus, session, messages, live, contextWindow, options.Width, now));
+                output.Write(PrintRenderer.RenderDetail(home, feedStatus, session, entries, live, contextWindow, options.Width, now));
             }
             else
             {
@@ -104,7 +104,7 @@ internal static class TuiPrint
         throw new TuiException(3, $"Several sessions are named \"{name}\": {string.Join("; ", matches.Select(session => session.Workdir))}. Pass --workdir to pick one.");
     }
 
-    private static IReadOnlyList<ChatMessage> LoadMessages(string directory)
+    private static IReadOnlyList<TranscriptEntry> LoadEntries(string directory)
     {
         var text = SharedFile.TryReadAllText(Path.Combine(directory, "session.json"));
 
@@ -130,7 +130,7 @@ internal static class TuiPrint
         }
 
         var tail = new TranscriptTail(Path.Combine(directory, "transcript.jsonl"));
-        return tail.Refresh(record).Messages;
+        return tail.Refresh(record).Entries;
     }
 
     private static int? ResolveContextWindow(SubordinateConfig? config, string alias)

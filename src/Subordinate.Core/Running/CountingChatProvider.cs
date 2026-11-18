@@ -13,6 +13,7 @@ public sealed class CountingChatProvider(IChatProvider inner) : IChatProvider
     private long _cachedInputTokens;
     private long _outputTokens;
     private long _lastInputTokens;
+    private long _lastCachedInputTokens;
     private long _lastOutputTokens;
 
     public string ProviderId => inner.ProviderId;
@@ -29,9 +30,13 @@ public sealed class CountingChatProvider(IChatProvider inner) : IChatProvider
 
     public long LastInputTokens => Interlocked.Read(ref _lastInputTokens);
 
+    public long LastCachedInputTokens => Interlocked.Read(ref _lastCachedInputTokens);
+
     public long LastOutputTokens => Interlocked.Read(ref _lastOutputTokens);
 
     public bool LastUsageReported { get; private set; }
+
+    public ChatFinishReason LastFinishReason { get; private set; }
 
     public bool IsStreaming { get; private set; }
 
@@ -39,6 +44,7 @@ public sealed class CountingChatProvider(IChatProvider inner) : IChatProvider
     {
         Interlocked.Increment(ref _modelCalls);
         LastUsageReported = false;
+        LastFinishReason = ChatFinishReason.Unknown;
         IsStreaming = true;
 
         try
@@ -51,8 +57,13 @@ public sealed class CountingChatProvider(IChatProvider inner) : IChatProvider
                     Interlocked.Add(ref _cachedInputTokens, usage.Usage.CachedInputTokens ?? 0);
                     Interlocked.Add(ref _outputTokens, usage.Usage.OutputTokens ?? 0);
                     Interlocked.Exchange(ref _lastInputTokens, usage.Usage.InputTokens ?? 0);
+                    Interlocked.Exchange(ref _lastCachedInputTokens, usage.Usage.CachedInputTokens ?? 0);
                     Interlocked.Exchange(ref _lastOutputTokens, usage.Usage.OutputTokens ?? 0);
                     LastUsageReported = true;
+                }
+                else if (streamEvent is StreamCompletedEvent completed)
+                {
+                    LastFinishReason = completed.FinishReason;
                 }
 
                 yield return streamEvent;

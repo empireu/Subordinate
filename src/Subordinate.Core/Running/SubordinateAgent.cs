@@ -22,9 +22,20 @@ public sealed class SubordinateAgent : Agent<SubordinateContext>
         ToolGate = gate;
     }
 
+    /// <summary>
+    ///     When this returns true, a reply without tool calls does not end the runner.
+    /// </summary>
+    public Func<bool>? KeepRunningAfterAnswer { get; set; }
+
     public override Task<AgentCallbackResult> HandleCompletion(AgentRunner<SubordinateContext> runner, ChatMessage response)
     {
         runner.ExecutionContext.InsertAssistantCompletion(response);
+
+        if (KeepRunningAfterAnswer?.Invoke() == true)
+        {
+            return Task.FromResult(AgentCallbackResult.Continue);
+        }
+
         return Task.FromResult(AgentCallbackResult.Break);
     }
 

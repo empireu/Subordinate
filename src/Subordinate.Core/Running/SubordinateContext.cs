@@ -86,6 +86,16 @@ public sealed class SubordinateContext(ToolEnvironment environment) : AgentExecu
 
     public void InsertUserMessage(string text)
     {
-        Timeline.InsertUser(text);
+        InsertUserMessage(text, null);
+    }
+
+    public void InsertUserMessage(string text, string? authorName)
+    {
+        Timeline.InsertChat(new ChatMessage
+        {
+            Role = ChatRole.User,
+            AuthorName = authorName,
+            Contents = [new TextContent { Text = text }]
+        });
     }
 }

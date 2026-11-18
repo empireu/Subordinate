@@ -1,12 +1,11 @@
 using System.Text.Json;
-using KnowledgeSystem.Ai.Providers.Abstractions;
 using Subordinate.Core.Sessions;
 
 namespace Subordinate.Tui.Data;
 
 public sealed record HistorySnapshot(
     string? Directory,
-    IReadOnlyList<ChatMessage> NewMessages,
+    IReadOnlyList<TranscriptEntry> NewEntries,
     int TotalCount,
     long Version,
     string? Notice,
@@ -23,7 +22,7 @@ public sealed class HistoryLoader : IDisposable
     private long _recordLength = -1;
     private int _recordCount;
     private long _version;
-    private readonly List<ChatMessage> _pendingMessages = [];
+    private readonly List<TranscriptEntry> _pendingEntries = [];
     private string? _notice;
     private bool _reset;
     private bool _loading;
@@ -38,8 +37,8 @@ public sealed class HistoryLoader : IDisposable
     {
         lock (_lock)
         {
-            var snapshot = new HistorySnapshot(_directory, _pendingMessages.ToArray(), _recordCount, _version, _notice, _reset, _loading);
-            _pendingMessages.Clear();
+            var snapshot = new HistorySnapshot(_directory, _pendingEntries.ToArray(), _recordCount, _version, _notice, _reset, _loading);
+            _pendingEntries.Clear();
             _reset = false;
             return snapshot;
         }
@@ -54,7 +53,7 @@ public sealed class HistoryLoader : IDisposable
             _recordWriteTimeUtc = default;
             _recordLength = -1;
             _recordCount = 0;
-            _pendingMessages.Clear();
+            _pendingEntries.Clear();
             _notice = null;
             _reset = true;
             _loading = true;
@@ -73,7 +72,7 @@ public sealed class HistoryLoader : IDisposable
             _recordWriteTimeUtc = default;
             _recordLength = -1;
             _recordCount = 0;
-            _pendingMessages.Clear();
+            _pendingEntries.Clear();
             _notice = null;
             _reset = false;
             _loading = false;
@@ -197,18 +196,18 @@ public sealed class HistoryLoader : IDisposable
                 }
 
                 var refresh = _tail.Refresh(record);
-                var changed = refresh.Reset || refresh.Messages.Count > 0 || refresh.Notice != _notice || _loading;
+                var changed = refresh.Reset || refresh.Entries.Count > 0 || refresh.Notice != _notice || _loading;
                 _recordCount = _tail.MessagesRead;
                 _recordWriteTimeUtc = writeTime;
                 _recordLength = length;
 
                 if (refresh.Reset)
                 {
-                    _pendingMessages.Clear();
+                    _pendingEntries.Clear();
                     _reset = true;
                 }
 
-                _pendingMessages.AddRange(refresh.Messages);
+                _pendingEntries.AddRange(refresh.Entries);
                 _notice = refresh.Notice;
                 _loading = false;
 

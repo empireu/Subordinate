@@ -52,8 +52,10 @@ public sealed class SessionRunner
     private readonly ChatRequestOptions _requestOptions;
     private readonly ICommandExecutor _executor;
     private readonly IMonitorFeed _monitor;
+    private readonly CompactionSettings _compaction;
     private readonly HashSet<string> _startedCallIds = [];
     private readonly HashSet<string> _reportedToolCallIds = [];
+    private readonly List<int> _activeLineIndices = [];
     private readonly Stopwatch _stopwatch = new();
     private readonly object _statusLock = new();
 
@@ -64,9 +66,15 @@ public sealed class SessionRunner
     private bool _persistenceEnabled;
     private int _persistedCount;
     private int _countedModelCalls;
+    private int _compactionCallsThisRun;
+    private int _countedCompactionCalls;
+    private int _summaryCallsThisRun;
+    private bool _lastCallWasSummary;
+    private int? _compactedAtModelCall;
     private long _countedInputTokens;
     private long _countedCachedInputTokens;
     private long _countedOutputTokens;
+    private string _originalTask = string.Empty;
     private string _lastActivity = "starting";
     private bool _warnedAboutLimit;
     private bool _finalTurnForced;
@@ -76,7 +84,7 @@ public sealed class SessionRunner
     private string? _activeToolName;
     private string? _stopRequestedBy;
 
-    public SessionRunner(SessionStore store, SessionPaths paths, SessionRecord record, string runId, IChatProvider provider, ChatRequestOptions requestOptions, ICommandExecutor executor, IMonitorFeed? monitorFeed = null)
+    public SessionRunner(SessionStore store, SessionPaths paths, SessionRecord record, string runId, IChatProvider provider, ChatRequestOptions requestOptions, ICommandExecutor executor, IMonitorFeed? monitorFeed = null, CompactionSettings? compaction = null)
     {
         _store = store;
         _paths = paths;
@@ -95,6 +103,7 @@ public sealed class SessionRunner
             PromptCacheKey = requestOptions.PromptCacheKey ?? CreatePromptCacheKey(record)
         };
         _executor = executor;
+        _compaction = compaction ?? CompactionSettings.Disabled;
     }
 
     private static string CreatePromptCacheKey(SessionRecord record)
@@ -106,7 +115,7 @@ public sealed class SessionRunner
 
     private ChatRequestOptions CreateTurnOptions()
     {
-        if (!_forceFinalTurn)
+        if (!_forceFinalTurn && _record.Compaction?.Phase != CompactionPhases.Summarizing)
         {
             return _requestOptions;
         }
@@ -232,18 +241,21 @@ public sealed class SessionRunner
         environment.FilesWritten.UnionWith(_record.FilesWritten);
         _context = new SubordinateContext(environment);
 
-        var transcript = Validate(_store, _paths, _record);
+        var transcriptLog = _store.LoadTranscriptLog(_paths, _record.Transcript);
+        var transcript = ValidateLog(transcriptLog, _record);
         foreach (var message in transcript)
         {
             _context.Timeline.InsertChat(message);
         }
 
+        _activeLineIndices.AddRange(transcriptLog.ActiveLineIndices);
+        _originalTask = transcriptLog.OriginalTask;
         _persistedCount = transcript.Count;
 
         var ledger = new PendingLedger(_record);
         _ledger = ledger;
-        var gate = new SubordinateGate(ledger, () => _runId, MarkExecutionStartingAsync) { RefuseNewCalls = () => _forceFinalTurn };
-        var agent = new SubordinateAgent(shell, gate);
+        var gate = new SubordinateGate(ledger, () => _runId, MarkExecutionStartingAsync) { RefuseNewCalls = RefuseToolCalls };
+        var agent = new SubordinateAgent(shell, gate) { KeepRunningAfterAnswer = () => _record.Compaction != null };
         _counting = new CountingChatProvider(new MonitoredChatProvider(_provider, _monitor));
         _runner = new AgentRunner<SubordinateContext>(
             _counting,
@@ -272,7 +284,9 @@ public sealed class SessionRunner
 
         while (true)
         {
-            if (!updateInserted && _runner.ActiveToolCalls.Count == 0)
+            var atBoundary = _runner.ActiveToolCalls.Count == 0;
+
+            if (!updateInserted && atBoundary)
             {
                 updateInserted = true;
 
@@ -301,9 +315,18 @@ public sealed class SessionRunner
                 return SessionStates.LimitReached;
             }
 
-            var modelCallsThisRun = _counting.ModelCalls - modelCallsAtStart;
+            if (atBoundary && _compactedAtModelCall is { } compactedAt && _counting.ModelCalls > compactedAt)
+            {
+                _compactedAtModelCall = null;
+                VerifyCompactedContext();
+            }
 
-            if (_runner.ActiveToolCalls.Count == 0 && modelCallsThisRun >= limits.MaxModelCalls)
+            var modelCallsThisRun = _counting.ModelCalls - modelCallsAtStart - _compactionCallsThisRun;
+            var turnLimitFired = false;
+            var compactionStarted = false;
+            var compactionApplied = false;
+
+            if (atBoundary && _record.Compaction == null && modelCallsThisRun >= limits.MaxModelCalls)
             {
                 if (_finalTurnForced)
                 {
@@ -322,8 +345,59 @@ public sealed class SessionRunner
                 _lastActivity = "final turn requested";
                 _context.InsertUserMessage("[Supervisor update]\nThe turn limit is reached. Do not call tools. Give your final answer now, including what is done and what remains.");
                 Persist();
+                turnLimitFired = true;
             }
-            else if (_runner.ActiveToolCalls.Count == 0 && limits.MaxModelCalls > 2 && !_warnedAboutLimit && modelCallsThisRun >= limits.MaxModelCalls - warningThreshold)
+
+            if (atBoundary && !turnLimitFired)
+            {
+                if (_record.Compaction == null && !_forceFinalTurn && TryStartCompaction())
+                {
+                    compactionStarted = true;
+                }
+
+                if (_record.Compaction?.Phase == CompactionPhases.WindDown && !compactionStarted
+                    && (_record.Compaction.WindDownTurnsUsed >= _compaction.WindDownTurns || IsAtSafePoint()))
+                {
+                    _record.Compaction.Phase = CompactionPhases.Summarizing;
+                }
+
+                if (_record.Compaction?.Phase == CompactionPhases.Summarizing)
+                {
+                    if (_lastCallWasSummary)
+                    {
+                        var lastMessage = LastActiveMessage();
+                        var usable = lastMessage is { Role: ChatRole.Assistant }
+                                     && lastMessage.GetToolCalls().Count == 0
+                                     && !string.IsNullOrWhiteSpace(lastMessage.GetText())
+                                     && _counting.LastFinishReason != ChatFinishReason.Length;
+
+                        if (usable)
+                        {
+                            ApplyCompaction(lastMessage!.GetText().Trim());
+                            compactionApplied = true;
+                        }
+                        else if (_summaryCallsThisRun >= 2)
+                        {
+                            throw new SubordinateException(ErrorCode.CompactionFailed, "The context compaction failed because the model did not write a usable summary. Resume the session to try again.");
+                        }
+                    }
+
+                    if (!compactionApplied)
+                    {
+                        var lastMessage = LastActiveMessage();
+                        var requestIsLast = lastMessage is { Role: ChatRole.User } && lastMessage.AuthorName == CompactionAuthors.Request;
+
+                        if (!requestIsLast)
+                        {
+                            _context.InsertUserMessage(_compaction.RequestText, CompactionAuthors.Request);
+                            _lastActivity = "compaction: writing the summary";
+                            Persist();
+                        }
+                    }
+                }
+            }
+
+            if (atBoundary && _record.Compaction == null && !turnLimitFired && !compactionStarted && limits.MaxModelCalls > 2 && !_warnedAboutLimit && modelCallsThisRun >= limits.MaxModelCalls - warningThreshold)
             {
                 _warnedAboutLimit = true;
                 var remaining = Math.Max(0, limits.MaxModelCalls - modelCallsThisRun);
@@ -332,10 +406,40 @@ public sealed class SessionRunner
                 Persist();
             }
 
-            if (_runner.ActiveToolCalls.Count == 0)
+            if (atBoundary)
             {
-                _lastActivity = _forceFinalTurn ? "waiting for the final answer" : "waiting for the model";
+                if (_record.Compaction?.Phase == CompactionPhases.WindDown)
+                {
+                    _lastActivity = "compaction: winding down";
+                }
+                else if (_record.Compaction?.Phase == CompactionPhases.Summarizing)
+                {
+                    _lastActivity = "compaction: writing the summary";
+                }
+                else if (!compactionApplied)
+                {
+                    _lastActivity = _forceFinalTurn ? "waiting for the final answer" : "waiting for the model";
+                }
+
                 WriteStatus(SessionStates.Running);
+            }
+
+            var modelCall = _runner.ActiveToolCalls.Count == 0;
+            var callPhase = _record.Compaction?.Phase;
+
+            if (modelCall)
+            {
+                _lastCallWasSummary = callPhase == CompactionPhases.Summarizing;
+
+                if (_record.Compaction != null)
+                {
+                    _compactionCallsThisRun++;
+                }
+
+                if (_lastCallWasSummary)
+                {
+                    _summaryCallsThisRun++;
+                }
             }
 
             try
@@ -346,6 +450,11 @@ public sealed class SessionRunner
             {
                 Persist();
                 return SessionStates.Stopped;
+            }
+
+            if (modelCall && callPhase == CompactionPhases.WindDown && _record.Compaction?.Phase == CompactionPhases.WindDown)
+            {
+                _record.Compaction.WindDownTurnsUsed++;
             }
 
             Persist();
@@ -359,13 +468,267 @@ public sealed class SessionRunner
         return _record.PendingCount > 0 ? SessionStates.AwaitingApproval : SessionStates.Finished;
     }
 
+    private string? RefuseToolCalls()
+    {
+        if (_record.Compaction?.Phase == CompactionPhases.Summarizing)
+        {
+            return "NOT EXECUTED: tools are disabled while you write the compaction summary. Write the summary as plain text.";
+        }
+
+        if (_forceFinalTurn)
+        {
+            return "NOT EXECUTED: the turn limit is reached, so no more tools can run. Give your final answer now, including what is done and what remains.";
+        }
+
+        return null;
+    }
+
+    private void VerifyCompactedContext()
+    {
+        if (_compaction.Threshold is not { } threshold)
+        {
+            return;
+        }
+
+        var compactedTokens = _counting!.LastUsageReported ? _counting.LastInputTokens : _record.ContextTokens;
+
+        if (compactedTokens >= threshold)
+        {
+            throw new SubordinateException(ErrorCode.CompactionFailed, $"The context is still about {compactedTokens.ToString(CultureInfo.InvariantCulture)} tokens after compaction, which is not below the autocompact threshold of {threshold.ToString(CultureInfo.InvariantCulture)} tokens. Raise autocompact_threshold for this model, then resume the session.");
+        }
+    }
+
+    private bool IsAtSafePoint()
+    {
+        var lastMessage = LastActiveMessage();
+        return lastMessage is { Role: ChatRole.Assistant } && lastMessage.GetToolCalls().Count == 0;
+    }
+
+    private ChatMessage? LastActiveMessage()
+    {
+        var messages = _context!.ChatMessages;
+        return messages.Count == 0 ? null : messages[^1];
+    }
+
+    private bool TryStartCompaction()
+    {
+        if (_compaction.Threshold is not { } threshold)
+        {
+            return false;
+        }
+
+        var estimate = ContextEstimator.EstimateActiveContext(_context!.ChatMessages, _record.ContextTokens);
+
+        if (estimate < threshold)
+        {
+            return false;
+        }
+
+        if (_compaction.WindDownTurns == 0)
+        {
+            _record.Compaction = new CompactionRecord
+            {
+                Phase = CompactionPhases.Summarizing,
+                StartedAt = DateTimeOffset.UtcNow,
+                TokensAtStart = estimate
+            };
+            _lastActivity = "compaction: writing the summary";
+            RunArtifacts.AppendLog(_runDirectory, $"- [{Now()}] context compaction started without wind-down (about {estimate} tokens)");
+            return true;
+        }
+
+        _context.InsertUserMessage(_compaction.NoticeText, CompactionAuthors.Notice);
+        _record.Compaction = new CompactionRecord
+        {
+            Phase = CompactionPhases.WindDown,
+            StartedAt = DateTimeOffset.UtcNow,
+            TokensAtStart = estimate
+        };
+        _lastActivity = "compaction: winding down";
+        RunArtifacts.AppendLog(_runDirectory, $"- [{Now()}] context compaction started: winding down for {_compaction.WindDownTurns} turns (about {estimate} tokens)");
+        Persist();
+        return true;
+    }
+
+    private void ApplyCompaction(string summaryText)
+    {
+        Persist();
+
+        var messages = _context!.ChatMessages;
+        var noticeIndex = -1;
+
+        for (var index = messages.Count - 1; index >= 0; index--)
+        {
+            if (messages[index].Role == ChatRole.User && messages[index].AuthorName == CompactionAuthors.Notice)
+            {
+                noticeIndex = index;
+                break;
+            }
+        }
+
+        var requestIndex = -1;
+
+        for (var index = noticeIndex + 1; index < messages.Count; index++)
+        {
+            if (messages[index].Role == ChatRole.User && messages[index].AuthorName == CompactionAuthors.Request)
+            {
+                requestIndex = index;
+                break;
+            }
+        }
+
+        var keptStart = noticeIndex >= 0 ? noticeIndex + 1 : messages.Count;
+        var keptEnd = requestIndex >= 0 ? requestIndex : messages.Count;
+
+        while (keptEnd > keptStart && messages[keptEnd - 1].Role == ChatRole.Assistant && messages[keptEnd - 1].GetToolCalls().Count == 0)
+        {
+            keptEnd--;
+        }
+
+        var keptMessages = new List<ChatMessage>();
+        var keptLineIndices = new List<int>();
+
+        for (var index = keptStart; index < keptEnd; index++)
+        {
+            keptMessages.Add(messages[index]);
+            keptLineIndices.Add(_activeLineIndices[index]);
+        }
+
+        int keptFromLine;
+        int keptToLine;
+
+        if (keptLineIndices.Count > 0)
+        {
+            keptFromLine = keptLineIndices[0];
+            keptToLine = keptLineIndices[^1] + 1;
+        }
+        else
+        {
+            var requestLineIndex = requestIndex >= 0 ? _activeLineIndices[requestIndex] : _activeLineIndices[^1];
+            keptFromLine = requestLineIndex;
+            keptToLine = requestLineIndex;
+        }
+
+        var replacementText = BuildCompactionMessage(summaryText);
+        var marker = new CompactionMarker
+        {
+            At = DateTimeOffset.UtcNow,
+            RemovedMessages = messages.Count - 1 - keptMessages.Count,
+            TokensBefore = _record.Compaction!.TokensAtStart,
+            Message = replacementText,
+            KeptFromLine = keptFromLine,
+            KeptToLine = keptToLine
+        };
+        var systemMessage = messages.Count > 0 ? messages[0] : null;
+
+        _record.Transcript = _store.AppendCompaction(_paths, _record.Transcript, marker);
+
+        _context.Timeline.ClearAll();
+
+        if (systemMessage != null)
+        {
+            _context.Timeline.InsertChat(systemMessage);
+        }
+
+        _context.Timeline.InsertChat(new ChatMessage
+        {
+            Role = ChatRole.User,
+            AuthorName = CompactionAuthors.Summary,
+            Contents = [new TextContent { Text = replacementText }]
+        });
+
+        foreach (var keptMessage in keptMessages)
+        {
+            _context.Timeline.InsertChat(keptMessage);
+        }
+
+        _persistedCount = _context.ChatMessages.Count;
+        _activeLineIndices.Clear();
+        _activeLineIndices.Add(0);
+        _activeLineIndices.Add(-1);
+
+        for (var line = keptFromLine; line < keptToLine; line++)
+        {
+            _activeLineIndices.Add(line);
+        }
+
+        _record.Compaction = null;
+        _record.Compactions++;
+        _compactedAtModelCall = _counting!.ModelCalls;
+        var after = ContextEstimator.Estimate(_context.ChatMessages);
+        _record.ContextTokens = after;
+        _store.Save(_paths, _record);
+
+        RunArtifacts.AppendLog(_runDirectory, $"- [{Now()}] context compacted: {marker.RemovedMessages} messages removed, about {marker.TokensBefore} tokens before, about {after} tokens after; summary call input {_counting!.LastInputTokens} tokens, cached {_counting.LastCachedInputTokens} tokens");
+        _lastActivity = "context compacted";
+        WriteStatus(SessionStates.Running);
+    }
+
+    private string BuildCompactionMessage(string summaryText)
+    {
+        var builder = new StringBuilder();
+        builder.Append("[Context compaction]\n");
+        builder.Append("Subordinate removed the earlier messages of this session to free context. Below are the original task, your summary of the work so far, and state recorded by Subordinate. The messages after this one are your most recent turns, kept as they were. Continue the task from here, and do not redo work the summary marks as done.\n");
+        builder.Append("\n# Original task\n\n").Append(_originalTask).Append('\n');
+        builder.Append("\n# Your summary\n\n").Append(summaryText).Append('\n');
+
+        var pending = _record.Pending.Where(item => item.Status == PendingStatuses.Pending).ToList();
+        var denied = _record.Pending.Where(item => item.Status == PendingStatuses.Denied).ToList();
+
+        if (pending.Count > 0 || denied.Count > 0)
+        {
+            builder.Append("\n# Approvals\n\n");
+
+            if (pending.Count > 0)
+            {
+                builder.Append("Still pending: ").Append(string.Join(", ", pending.Select(item => $"{item.Id} ({item.Summary})"))).Append(".\n");
+            }
+
+            foreach (var item in denied)
+            {
+                builder.Append("Denied, do not retry: ").Append(item.Id).Append(" (").Append(item.Summary).Append(").");
+
+                if (!string.IsNullOrWhiteSpace(item.Decision?.Reason))
+                {
+                    builder.Append(" Reason: ").Append(item.Decision!.Reason!.Trim()).Append('.');
+                }
+
+                builder.Append('\n');
+            }
+        }
+
+        var files = _context!.Environment.FilesWritten.Order(PlatformServices.Current.Paths.Comparer).ToList();
+
+        if (files.Count > 0)
+        {
+            builder.Append("\n# Files written in this session\n\n");
+
+            foreach (var file in files.Take(200))
+            {
+                builder.Append("- ").Append(file).Append('\n');
+            }
+
+            if (files.Count > 200)
+            {
+                builder.Append("- and ").Append(files.Count - 200).Append(" more\n");
+            }
+        }
+
+        return builder.ToString().TrimEnd('\n');
+    }
+
     /// <summary>
     ///     Loads the transcript and checks that it agrees with the pending list and the interrupted batch. Throws <see cref="ErrorCode.StateConflict"/> when it does not.
     /// </summary>
     public static List<ChatMessage> Validate(SessionStore store, SessionPaths paths, SessionRecord record)
     {
-        var transcript = store.LoadTranscript(paths, record.Transcript);
-        ValidatePendingConsistency(transcript, record);
+        return ValidateLog(store.LoadTranscriptLog(paths, record.Transcript), record);
+    }
+
+    private static List<ChatMessage> ValidateLog(TranscriptLog log, SessionRecord record)
+    {
+        var transcript = log.ActiveMessages;
+        ValidatePendingConsistency(log.AllMessages, record);
 
         var inflight = record.Inflight;
         if (inflight != null && (inflight.AssistantIndex != transcript.Count - 1 || transcript.Count == 0 || transcript[^1].Role != ChatRole.Assistant || transcript[^1].GetToolCalls().Count == 0))
@@ -693,7 +1056,14 @@ public sealed class SessionRunner
         if (messages.Count > _persistedCount)
         {
             var newMessages = messages.Skip(_persistedCount).ToList();
+            var firstLineIndex = _record.Transcript.Count;
             _record.Transcript = _store.AppendTranscript(_paths, _record.Transcript, newMessages);
+
+            for (var offset = 0; offset < newMessages.Count; offset++)
+            {
+                _activeLineIndices.Add(firstLineIndex + offset);
+            }
+
             _persistedCount = messages.Count;
             LogMessages(newMessages);
         }
@@ -812,11 +1182,13 @@ public sealed class SessionRunner
         }
 
         var modelCalls = _counting.ModelCalls - _countedModelCalls;
+        var compactionCalls = _compactionCallsThisRun - _countedCompactionCalls;
         var inputTokens = _counting.InputTokens - _countedInputTokens;
         var cachedInputTokens = _counting.CachedInputTokens - _countedCachedInputTokens;
         var outputTokens = _counting.OutputTokens - _countedOutputTokens;
 
         _record.Counters.ModelCalls += modelCalls;
+        _record.Counters.CompactionModelCalls += compactionCalls;
         _record.Counters.InputTokens += inputTokens;
         _record.Counters.CachedInputTokens += cachedInputTokens;
         _record.Counters.OutputTokens += outputTokens;
@@ -824,6 +1196,7 @@ public sealed class SessionRunner
         if (_record.CurrentRun is { } run)
         {
             run.Counters.ModelCalls += modelCalls;
+            run.Counters.CompactionModelCalls += compactionCalls;
             run.Counters.InputTokens += inputTokens;
             run.Counters.CachedInputTokens += cachedInputTokens;
             run.Counters.OutputTokens += outputTokens;
@@ -835,6 +1208,7 @@ public sealed class SessionRunner
         }
 
         _countedModelCalls = _counting.ModelCalls;
+        _countedCompactionCalls = _compactionCallsThisRun;
         _countedInputTokens = _counting.InputTokens;
         _countedCachedInputTokens = _counting.CachedInputTokens;
         _countedOutputTokens = _counting.OutputTokens;
@@ -1039,7 +1413,8 @@ public sealed class SessionRunner
             return 0;
         }
 
-        var used = _record.CurrentRun?.Counters.ModelCalls ?? 0;
+        var counters = _record.CurrentRun?.Counters;
+        var used = Math.Max(0, (counters?.ModelCalls ?? 0) - (counters?.CompactionModelCalls ?? 0));
         return Math.Max(0, _limits.MaxModelCalls - used);
     }
 

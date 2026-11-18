@@ -88,6 +88,8 @@ internal static class UtilityCommands
         var home = SubordinateConfig.ResolveHome();
         var path = Path.Combine(home, SubordinateConfig.FileName);
         var promptPath = Path.Combine(home, SubordinateConfig.BasePromptFileName);
+        var noticePath = Path.Combine(home, SubordinateConfig.AutocompactNoticeFileName);
+        var requestPath = Path.Combine(home, SubordinateConfig.AutocompactPromptFileName);
         Directory.CreateDirectory(home);
 
         var configCreated = !File.Exists(path);
@@ -102,6 +104,18 @@ internal static class UtilityCommands
             File.WriteAllText(promptPath, SubordinateAgent.DefaultBasePrompt.ReplaceLineEndings("\n") + "\n", new UTF8Encoding(false));
         }
 
+        var noticeCreated = !File.Exists(noticePath);
+        if (noticeCreated)
+        {
+            File.WriteAllText(noticePath, CompactionPrompts.DefaultNotice.ReplaceLineEndings("\n") + "\n", new UTF8Encoding(false));
+        }
+
+        var requestCreated = !File.Exists(requestPath);
+        if (requestCreated)
+        {
+            File.WriteAllText(requestPath, CompactionPrompts.DefaultRequest.ReplaceLineEndings("\n") + "\n", new UTF8Encoding(false));
+        }
+
         var summary = new StringBuilder();
         summary.Append(configCreated
             ? $"Created {path}. Set the model id, and set the environment variable named by api_key_env to your API key."
@@ -109,6 +123,12 @@ internal static class UtilityCommands
         summary.Append('\n').Append(promptCreated
             ? $"Created {promptPath} with the built-in base system prompt. Edit it to change the base prompt of new sessions."
             : $"The base system prompt already exists at {promptPath}.");
+        summary.Append('\n').Append(noticeCreated
+            ? $"Created {noticePath} with the built-in compaction notice. Edit it to change the wind-down notice."
+            : $"The compaction notice already exists at {noticePath}.");
+        summary.Append('\n').Append(requestCreated
+            ? $"Created {requestPath} with the built-in compaction summary request. Edit it to change the summary request."
+            : $"The compaction summary request already exists at {requestPath}.");
 
         return new CommandResult(new Envelope
         {
@@ -119,6 +139,10 @@ internal static class UtilityCommands
                 writer.WriteBoolean("created", configCreated);
                 writer.WriteString("system_prompt_file", promptPath);
                 writer.WriteBoolean("system_prompt_created", promptCreated);
+                writer.WriteString("autocompact_notice_file", noticePath);
+                writer.WriteBoolean("autocompact_notice_created", noticeCreated);
+                writer.WriteString("autocompact_prompt_file", requestPath);
+                writer.WriteBoolean("autocompact_prompt_created", requestCreated);
             }
         }, summary.ToString());
     }
@@ -194,6 +218,26 @@ internal static class UtilityCommands
         catch (SubordinateException ex)
         {
             checks.Add(("system_prompt", false, ex.Message));
+        }
+
+        try
+        {
+            var (_, noticePath) = SubordinateConfig.LoadAutocompactNotice(home);
+            checks.Add(("autocompact_notice", true, noticePath ?? "built-in default (no autocompact-notice.md)"));
+        }
+        catch (SubordinateException ex)
+        {
+            checks.Add(("autocompact_notice", false, ex.Message));
+        }
+
+        try
+        {
+            var (_, requestPath) = SubordinateConfig.LoadAutocompactPrompt(home);
+            checks.Add(("autocompact_prompt", true, requestPath ?? "built-in default (no autocompact-prompt.md)"));
+        }
+        catch (SubordinateException ex)
+        {
+            checks.Add(("autocompact_prompt", false, ex.Message));
         }
 
         checks.Add(("commands", true, $"{CommandDatabase.Count} entries in the command database"));

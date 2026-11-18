@@ -39,6 +39,8 @@ public sealed class ModelEntry
     public string? ReasoningEffort { get; set; }
 
     public int? ContextWindow { get; set; }
+
+    public int? AutocompactThreshold { get; set; }
 }
 
 public sealed class ShellPathsEntry
@@ -68,6 +70,8 @@ public sealed class DefaultsEntry
     public int ShellTimeoutSeconds { get; set; } = 120;
 
     public int KeepRuns { get; set; } = 10;
+
+    public int AutocompactWindDownTurns { get; set; } = 5;
 }
 
 /// <summary>
@@ -79,7 +83,13 @@ public sealed class SubordinateConfig
 
     public const string BasePromptFileName = "system-prompt.md";
 
+    public const string AutocompactNoticeFileName = "autocompact-notice.md";
+
+    public const string AutocompactPromptFileName = "autocompact-prompt.md";
+
     private const int MaxBasePromptCharacters = 200_000;
+
+    private const int MaxCompactionPromptCharacters = 50_000;
 
     public static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -153,11 +163,33 @@ public sealed class SubordinateConfig
     /// </summary>
     public static (string Text, string? Path) LoadBasePrompt(string home)
     {
-        var path = System.IO.Path.Combine(home, BasePromptFileName);
+        var path = Path.Combine(home, BasePromptFileName);
+        return LoadPromptFile(path, SubordinateAgent.DefaultBasePrompt, "base system prompt", MaxBasePromptCharacters);
+    }
 
+    /// <summary>
+    ///     Reads the wind-down notice from autocompact-notice.md in the home directory, or returns the built-in default when the file does not exist.
+    /// </summary>
+    public static (string Text, string? Path) LoadAutocompactNotice(string home)
+    {
+        var path = Path.Combine(home, AutocompactNoticeFileName);
+        return LoadPromptFile(path, CompactionPrompts.DefaultNotice, "autocompact notice", MaxCompactionPromptCharacters);
+    }
+
+    /// <summary>
+    ///     Reads the summary request from autocompact-prompt.md in the home directory, or returns the built-in default when the file does not exist.
+    /// </summary>
+    public static (string Text, string? Path) LoadAutocompactPrompt(string home)
+    {
+        var path = Path.Combine(home, AutocompactPromptFileName);
+        return LoadPromptFile(path, CompactionPrompts.DefaultRequest, "autocompact prompt", MaxCompactionPromptCharacters);
+    }
+
+    private static (string Text, string? Path) LoadPromptFile(string path, string defaultText, string description, int maximumCharacters)
+    {
         if (!File.Exists(path))
         {
-            return (SubordinateAgent.DefaultBasePrompt, null);
+            return (defaultText, null);
         }
 
         string text;
@@ -167,17 +199,17 @@ public sealed class SubordinateConfig
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
-            throw new SubordinateException(ErrorCode.ConfigError, $"The base system prompt at {path} could not be read: {ex.Message}");
+            throw new SubordinateException(ErrorCode.ConfigError, $"The {description} at {path} could not be read: {ex.Message}");
         }
 
         if (string.IsNullOrWhiteSpace(text))
         {
-            throw new SubordinateException(ErrorCode.ConfigError, $"The base system prompt at {path} is empty. Delete it to use the built-in prompt.");
+            throw new SubordinateException(ErrorCode.ConfigError, $"The {description} at {path} is empty. Delete it to use the built-in prompt.");
         }
 
-        if (text.Length > MaxBasePromptCharacters)
+        if (text.Length > maximumCharacters)
         {
-            throw new SubordinateException(ErrorCode.ConfigError, $"The base system prompt at {path} is longer than {MaxBasePromptCharacters} characters.");
+            throw new SubordinateException(ErrorCode.ConfigError, $"The {description} at {path} is longer than {maximumCharacters} characters.");
         }
 
         return (text, path);

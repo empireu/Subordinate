@@ -1,5 +1,5 @@
 using System.Text;
-using KnowledgeSystem.Ai.Providers.Abstractions;
+using Subordinate.Core.Sessions;
 using Subordinate.Tui.Data;
 using Subordinate.Tui.Live;
 
@@ -31,7 +31,7 @@ public static class PrintRenderer
         return builder.ToString();
     }
 
-    public static string RenderDetail(string home, string feedStatus, SessionSummary session, IReadOnlyList<ChatMessage> messages, LiveSessionSnapshot? live, int? contextWindow, int width, DateTimeOffset now)
+    public static string RenderDetail(string home, string feedStatus, SessionSummary session, IReadOnlyList<TranscriptEntry> entries, LiveSessionSnapshot? live, int? contextWindow, int width, DateTimeOffset now)
     {
         var builder = new StringBuilder();
         builder.Append($"home: {home}  live feed: {feedStatus}").Append('\n');
@@ -44,9 +44,9 @@ public static class PrintRenderer
         var state = new HistoryFormatState();
         var lines = new List<HistoryLine>();
 
-        foreach (var message in messages)
+        foreach (var entry in entries)
         {
-            HistoryLayout.Append(HistoryFormatter.FormatMessage(message, state, true, true), width, true, lines);
+            HistoryLayout.Append(HistoryFormatter.FormatEntry(entry, state, true, true), width, true, lines);
         }
 
         HistoryLayout.Append(HistoryFormatter.FormatLive(live, now), width, true, lines);

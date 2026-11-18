@@ -20,7 +20,8 @@ public enum ErrorCode
     PromptError,
     AmbiguousSession,
     NothingToResume,
-    RunFailed
+    RunFailed,
+    CompactionFailed
 }
 
 public static class ErrorCodes
@@ -45,6 +46,7 @@ public static class ErrorCodes
             ErrorCode.AmbiguousSession => "ambiguous_session",
             ErrorCode.NothingToResume => "nothing_to_resume",
             ErrorCode.RunFailed => "run_failed",
+            ErrorCode.CompactionFailed => "compaction_failed",
             _ => "internal_error"
         };
     }
@@ -69,6 +71,7 @@ public static class ErrorCodes
             ErrorCode.AmbiguousSession => 14,
             ErrorCode.NothingToResume => 15,
             ErrorCode.RunFailed => 20,
+            ErrorCode.CompactionFailed => 21,
             _ => 1
         };
     }

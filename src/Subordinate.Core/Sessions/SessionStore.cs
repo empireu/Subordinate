@@ -11,6 +11,24 @@ using Subordinate.Core.Platform;
 namespace Subordinate.Core.Sessions;
 
 /// <summary>
+///     The committed transcript in file order, plus the messages the model sees after the last compaction.
+/// </summary>
+public sealed class TranscriptLog
+{
+    public List<TranscriptEntry> Entries { get; } = [];
+
+    public List<ChatMessage> AllMessages { get; } = [];
+
+    public List<ChatMessage> ActiveMessages { get; } = [];
+
+    public List<int> ActiveLineIndices { get; } = [];
+
+    public string OriginalTask { get; set; } = string.Empty;
+
+    public int CompactionCount { get; set; }
+}
+
+/// <summary>
 ///     The files of one session.
 /// </summary>
 public sealed class SessionPaths(string directory)
@@ -318,11 +336,19 @@ public sealed class SessionStore
     /// </summary>
     public List<ChatMessage> LoadTranscript(SessionPaths paths, TranscriptPointer pointer)
     {
-        var messages = new List<ChatMessage>(pointer.Count);
+        return LoadTranscriptLog(paths, pointer).ActiveMessages;
+    }
+
+    /// <summary>
+    ///     Reads the committed transcript entries, every message line, and the messages the model sees after the last compaction.
+    /// </summary>
+    public TranscriptLog LoadTranscriptLog(SessionPaths paths, TranscriptPointer pointer)
+    {
+        var log = new TranscriptLog();
 
         if (pointer.Count == 0)
         {
-            return messages;
+            return log;
         }
 
         byte[] bytes;
@@ -354,20 +380,117 @@ public sealed class SessionStore
 
             try
             {
-                messages.Add(TranscriptSerializer.Deserialize(line));
+                log.Entries.Add(TranscriptSerializer.DeserializeEntry(line));
             }
-            catch (Exception ex) when (ex is JsonException or InvalidDataException or KeyNotFoundException or InvalidOperationException)
+            catch (Exception ex) when (ex is JsonException or InvalidDataException or KeyNotFoundException or InvalidOperationException or FormatException)
             {
-                throw new SubordinateException(ErrorCode.StateConflict, $"Transcript line {messages.Count + 1} cannot be read: {ex.Message}");
+                throw new SubordinateException(ErrorCode.StateConflict, $"Transcript line {log.Entries.Count + 1} cannot be read: {ex.Message}");
             }
         }
 
-        if (messages.Count != pointer.Count)
+        if (log.Entries.Count != pointer.Count)
         {
-            throw new SubordinateException(ErrorCode.StateConflict, $"The transcript holds {messages.Count} messages but the session record says {pointer.Count}.");
+            throw new SubordinateException(ErrorCode.StateConflict, $"The transcript holds {log.Entries.Count} messages but the session record says {pointer.Count}.");
         }
 
-        return messages;
+        var previousMarkerIndex = -1;
+
+        for (var index = 0; index < log.Entries.Count; index++)
+        {
+            switch (log.Entries[index])
+            {
+                case TranscriptMessageEntry messageEntry:
+                {
+                    log.AllMessages.Add(messageEntry.Message);
+                    break;
+                }
+                case TranscriptCompactionEntry:
+                {
+                    ValidateCompactionMarker(log.Entries, index, previousMarkerIndex);
+                    previousMarkerIndex = index;
+                    log.CompactionCount++;
+                    break;
+                }
+            }
+        }
+
+        var firstUserMessage = log.AllMessages.FirstOrDefault(message => message.Role == ChatRole.User);
+        log.OriginalTask = firstUserMessage?.GetText() ?? string.Empty;
+        BuildActiveMessages(log);
+        return log;
+    }
+
+    private static void ValidateCompactionMarker(List<TranscriptEntry> entries, int markerIndex, int previousMarkerIndex)
+    {
+        var marker = ((TranscriptCompactionEntry)entries[markerIndex]).Marker;
+
+        if (marker.KeptFromLine < 1 || marker.KeptFromLine > marker.KeptToLine || marker.KeptToLine > markerIndex || marker.KeptFromLine <= previousMarkerIndex)
+        {
+            throw InvalidCompactionMarker(markerIndex);
+        }
+
+        for (var line = marker.KeptFromLine; line < marker.KeptToLine; line++)
+        {
+            if (entries[line] is not TranscriptMessageEntry)
+            {
+                throw InvalidCompactionMarker(markerIndex);
+            }
+        }
+    }
+
+    private static SubordinateException InvalidCompactionMarker(int markerIndex)
+    {
+        return new SubordinateException(ErrorCode.StateConflict, $"The compaction marker on line {markerIndex} refers to messages that cannot be kept. The session cannot be resumed safely.");
+    }
+
+    private static void BuildActiveMessages(TranscriptLog log)
+    {
+        var lastMarkerIndex = log.Entries.FindLastIndex(entry => entry is TranscriptCompactionEntry);
+
+        if (lastMarkerIndex < 0)
+        {
+            for (var index = 0; index < log.Entries.Count; index++)
+            {
+                if (log.Entries[index] is TranscriptMessageEntry messageEntry)
+                {
+                    log.ActiveMessages.Add(messageEntry.Message);
+                    log.ActiveLineIndices.Add(index);
+                }
+            }
+
+            return;
+        }
+
+        var marker = ((TranscriptCompactionEntry)log.Entries[lastMarkerIndex]).Marker;
+
+        if (log.AllMessages.Count > 0)
+        {
+            log.ActiveMessages.Add(log.AllMessages[0]);
+            log.ActiveLineIndices.Add(0);
+        }
+
+        log.ActiveMessages.Add(new ChatMessage
+        {
+            Role = ChatRole.User,
+            AuthorName = CompactionAuthors.Summary,
+            Contents = [new TextContent { Text = marker.Message }]
+        });
+        log.ActiveLineIndices.Add(-1);
+
+        for (var line = marker.KeptFromLine; line < marker.KeptToLine; line++)
+        {
+            log.ActiveMessages.Add(((TranscriptMessageEntry)log.Entries[line]).Message);
+            log.ActiveLineIndices.Add(line);
+        }
+
+        for (var index = lastMarkerIndex + 1; index < log.Entries.Count; index++)
+        {
+            if (log.Entries[index] is TranscriptMessageEntry messageEntry)
+            {
+                log.ActiveMessages.Add(messageEntry.Message);
+                log.ActiveLineIndices.Add(index);
+            }
+        }
     }
 
     /// <summary>
@@ -380,21 +503,40 @@ public sealed class SessionStore
             return pointer;
         }
 
+        var lines = messages.Select(TranscriptSerializer.Serialize).ToList();
+        return AppendLines(paths, pointer, lines);
+    }
+
+    /// <summary>
+    ///     Appends a compaction marker after the committed length, discarding any torn tail, and returns the new pointer. The caller commits it by saving the record.
+    /// </summary>
+    public TranscriptPointer AppendCompaction(SessionPaths paths, TranscriptPointer pointer, CompactionMarker marker)
+    {
+        return AppendLines(paths, pointer, [TranscriptSerializer.SerializeCompaction(marker)]);
+    }
+
+    private static TranscriptPointer AppendLines(SessionPaths paths, TranscriptPointer pointer, IReadOnlyList<string> lines)
+    {
+        if (lines.Count == 0)
+        {
+            return pointer;
+        }
+
         using var stream = new FileStream(paths.TranscriptFile, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.Read);
         stream.SetLength(pointer.Bytes);
         stream.Seek(pointer.Bytes, SeekOrigin.Begin);
 
-        foreach (var message in messages)
+        foreach (var line in lines)
         {
-            var line = Encoding.UTF8.GetBytes(TranscriptSerializer.Serialize(message) + "\n");
-            stream.Write(line);
+            var bytes = Encoding.UTF8.GetBytes(line + "\n");
+            stream.Write(bytes);
         }
 
         stream.Flush(true);
 
         return new TranscriptPointer
         {
-            Count = pointer.Count + messages.Count,
+            Count = pointer.Count + lines.Count,
             Bytes = stream.Length
         };
     }

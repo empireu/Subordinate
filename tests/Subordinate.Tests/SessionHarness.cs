@@ -64,7 +64,7 @@ internal sealed class SessionHarness : IDisposable
         Store.Save(Paths, record);
     }
 
-    public async Task<(RunOutcome Outcome, SessionRecord Record)> RunAsync(IChatProvider provider, RunLimits? limits = null, ICommandExecutor? executor = null, CancellationToken cancellationToken = default, IMonitorFeed? monitorFeed = null)
+    public async Task<(RunOutcome Outcome, SessionRecord Record)> RunAsync(IChatProvider provider, RunLimits? limits = null, ICommandExecutor? executor = null, CancellationToken cancellationToken = default, IMonitorFeed? monitorFeed = null, CompactionSettings? compaction = null)
     {
         var record = Load();
         var runId = Store.CreateRunDirectory(Paths, record.Runs.Count + 1, 10);
@@ -72,7 +72,7 @@ internal sealed class SessionHarness : IDisposable
         record.State = SessionStates.Starting;
         Store.Save(Paths, record);
 
-        var runner = new SessionRunner(Store, Paths, record, runId, provider, new ChatRequestOptions(), executor ?? Executor, monitorFeed);
+        var runner = new SessionRunner(Store, Paths, record, runId, provider, new ChatRequestOptions(), executor ?? Executor, monitorFeed, compaction);
         var outcome = await runner.RunAsync(limits ?? new RunLimits { MaxModelCalls = 10, MaxDuration = TimeSpan.FromMinutes(1) }, cancellationToken);
         return (outcome, Load());
     }
@@ -146,6 +146,10 @@ internal sealed class ScriptedProvider(params ChatMessage[] responses) : IChatPr
 
     public ChatUsage? Usage { get; set; }
 
+    public Queue<ChatUsage?>? Usages { get; set; }
+
+    public Queue<ChatFinishReason>? FinishReasons { get; set; }
+
     public string ProviderId => "scripted";
 
     public string? DefaultModel => "scripted";
@@ -162,12 +166,16 @@ internal sealed class ScriptedProvider(params ChatMessage[] responses) : IChatPr
             yield break;
         }
 
-        if (Usage != null)
+        var usage = Usages is { Count: > 0 } ? Usages.Dequeue() : Usage;
+
+        if (usage != null)
         {
-            yield return new UsageReceivedEvent(Usage);
+            yield return new UsageReceivedEvent(usage);
         }
 
-        var finishReason = response.Contents.OfType<ToolCallContent>().Any() ? ChatFinishReason.ToolCalls : ChatFinishReason.Stop;
+        var finishReason = FinishReasons is { Count: > 0 }
+            ? FinishReasons.Dequeue()
+            : response.Contents.OfType<ToolCallContent>().Any() ? ChatFinishReason.ToolCalls : ChatFinishReason.Stop;
         yield return new StreamCompletedEvent(finishReason, response);
     }
 

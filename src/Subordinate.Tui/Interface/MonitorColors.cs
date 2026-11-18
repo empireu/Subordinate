@@ -26,6 +26,7 @@ public static class MonitorColors
     private static readonly Color Red = new(0xf7, 0x76, 0x8e);
     private static readonly Color Magenta = new(0xbb, 0x9a, 0xf7);
     private static readonly Color Teal = new(0x73, 0xda, 0xca);
+    private static readonly Color Orange = new(0xff, 0x9e, 0x64);
 
     public static readonly Scheme Window = new(new TerminalAttribute(Foreground, Background))
     {
@@ -86,6 +87,7 @@ public static class MonitorColors
                 HistoryBlockKind.Assistant => Green,
                 HistoryBlockKind.Tool => Blue,
                 HistoryBlockKind.Live => Cyan,
+                HistoryBlockKind.Compaction => Orange,
                 _ => Foreground
             }, Surface),
             HistoryBlockRole.Note => kind switch
@@ -93,6 +95,7 @@ public static class MonitorColors
                 HistoryBlockKind.ToolResult => RunningText,
                 HistoryBlockKind.ToolFailure => FailureText,
                 HistoryBlockKind.Warning => ApprovalText,
+                HistoryBlockKind.Compaction => new TerminalAttribute(Orange, Background),
                 _ => CommentText
             },
             _ => kind switch

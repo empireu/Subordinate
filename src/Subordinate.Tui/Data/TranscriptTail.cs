@@ -1,22 +1,21 @@
 using System.Text;
 using System.Text.Json;
-using KnowledgeSystem.Ai.Providers.Abstractions;
 using Subordinate.Core.Sessions;
 
 namespace Subordinate.Tui.Data;
 
-public sealed record TranscriptRefresh(IReadOnlyList<ChatMessage> Messages, bool Reset, string? Notice);
+public sealed record TranscriptRefresh(IReadOnlyList<TranscriptEntry> Entries, bool Reset, string? Notice);
 
 public sealed class TranscriptTail(string transcriptPath)
 {
-    private readonly List<ChatMessage> _messages = [];
+    private readonly List<TranscriptEntry> _entries = [];
 
     private DateTimeOffset _createdAt;
     private long _offset;
     private int _messagesRead;
     private int _unreadableLines;
 
-    public IReadOnlyList<ChatMessage> Messages => _messages;
+    public IReadOnlyList<TranscriptEntry> Entries => _entries;
 
     /// <summary>
     ///     Counts transcript lines consumed so far, including the ones that could not be read.
@@ -34,7 +33,7 @@ public sealed class TranscriptTail(string transcriptPath)
             _offset = 0;
             _messagesRead = 0;
             _unreadableLines = 0;
-            _messages.Clear();
+            _entries.Clear();
         }
 
         if (pointer.Bytes <= _offset)
@@ -57,7 +56,7 @@ public sealed class TranscriptTail(string transcriptPath)
         }
 
         var start = 0;
-        var added = new List<ChatMessage>();
+        var added = new List<TranscriptEntry>();
 
         while (start < bytes.Length)
         {
@@ -81,11 +80,11 @@ public sealed class TranscriptTail(string transcriptPath)
 
             try
             {
-                var message = TranscriptSerializer.Deserialize(line);
-                _messages.Add(message);
-                added.Add(message);
+                var entry = TranscriptSerializer.DeserializeEntry(line);
+                _entries.Add(entry);
+                added.Add(entry);
             }
-            catch (Exception ex) when (ex is JsonException or InvalidDataException or KeyNotFoundException or InvalidOperationException)
+            catch (Exception ex) when (ex is JsonException or InvalidDataException or KeyNotFoundException or InvalidOperationException or FormatException)
             {
                 _unreadableLines++;
             }

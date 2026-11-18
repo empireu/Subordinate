@@ -25,11 +25,11 @@ The same build deploys the session monitor to `bin/tui` under the home, as `subo
     "mistral": { "protocol": "mistral-chat-completions", "endpoint": "https://api.mistral.ai/v1", "api_key_env": "MISTRAL_API_KEY" }
   },
   "models": {
-    "default": { "provider": "mistral", "model": "REPLACE-WITH-MODEL-ID", "temperature": 0.2, "context_window": 128000 }
+    "default": { "provider": "mistral", "model": "REPLACE-WITH-MODEL-ID", "temperature": 0.2, "context_window": 128000, "autocompact_threshold": 96000 }
   },
   "default_model": "default",
   "shells": { "bash": null, "powershell": null, "pwsh": null },
-  "defaults": { "shell": "bash", "max_turns": 100, "max_minutes": 60, "shell_timeout_seconds": 120, "keep_runs": 10 },
+  "defaults": { "shell": "bash", "max_turns": 100, "max_minutes": 60, "shell_timeout_seconds": 120, "keep_runs": 10, "autocompact_wind_down_turns": 5 },
   "monitor": { "enabled": true }
 }
 ```
@@ -37,6 +37,14 @@ The same build deploys the session monitor to `bin/tui` under the home, as `subo
 `protocol` defaults to `mistral-chat-completions`, the only protocol registered. Add more entries under `models` to have several aliases and pick one with `start --model ALIAS`. The API key is read from the environment variable named by `api_key_env` and is never written to disk or output. Every variable named as an `api_key_env`, and every variable whose name looks like a secret, is removed from the environment of the commands the subagent runs. `subordinate doctor` checks the configuration, the key and the shells.
 
 `context_window` is optional. When it is set, the session monitor shows a context bar for that model.
+
+### Autocompaction
+
+`autocompact_threshold` is optional and works per model. It is a number of context tokens. When it is set, the session compacts its own context before the model window fills up; when it is missing, the model never compacts. The threshold must be at least 1000 and, when `context_window` is also set, below it. `autocompact_wind_down_turns` in `defaults` controls how many model turns the subagent gets to reach a safe stopping point; it defaults to 5 and must be between 0 and 50.
+
+A compaction starts at a point where no tool batch is open. With wind-down turns left, the subagent first receives `autocompact-notice.md`, finishes what it started, and then receives `autocompact-prompt.md`. Tools are disabled for the summary turn. The subagent's summary, the original task, pending and denied approvals and the files written replace the older messages, while the last wind-down turns stay verbatim. The session then continues in the same conversation. The notice and the summary request can be edited in the files next to `system-prompt.md`; when a file is missing, the built-in default is used, and `subordinate init` writes both files for you to edit.
+
+The full history stays in `transcript.jsonl`; a compaction only appends a marker line with the summary and the kept line range. The monitor shows the marker as one note. If the model cannot produce a usable summary, the run fails with `compaction_failed` (exit code 21) and the session can be resumed; the next run asks for the summary again.
 
 `monitor.enabled` defaults to true. `monitor.socket_path` overrides the default `<home>/monitor.sock` and must be an absolute path no longer than 100 bytes. Setting `monitor.enabled` to false turns off all socket code in Subordinate; the monitor still shows sessions from their files.
 
@@ -130,6 +138,7 @@ Exit code 0 means the command did what was asked, whatever state the session is 
 | 14 | `ambiguous_session` | The name exists in several workdirs. Pass `--workdir`. |
 | 15 | `nothing_to_resume` | `resume` with no decisions and no message on a finished or waiting session. |
 | 20 | `run_failed` | A `--wait` run ended in the `failed` state. |
+| 21 | `compaction_failed` | The model did not write a usable summary. Resume to retry. |
 
 ## Commands
 
