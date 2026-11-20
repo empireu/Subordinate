@@ -84,10 +84,79 @@ internal static class MistralRequestMapper
         return new MistralMessage
         {
             Role = "tool",
-            Content = JsonValue.Create(result.Output),
+            Content = HasContentAfterToolResult(message.Contents) ? MapToolResultContent(message.Contents, result) : JsonValue.Create(result.Output),
             ToolCallId = result.CallId,
             Name = result.ToolName
         };
+    }
+
+    private static bool HasContentAfterToolResult(IReadOnlyList<ChatContent> contents)
+    {
+        var sawToolResult = false;
+
+        foreach (var content in contents)
+        {
+            if (content is ToolResultContent)
+            {
+                sawToolResult = true;
+                continue;
+            }
+
+            if (sawToolResult)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static JsonArray MapToolResultContent(IReadOnlyList<ChatContent> contents, ToolResultContent result)
+    {
+        var array = new JsonArray
+        {
+            new JsonObject
+            {
+                ["type"] = "text",
+                ["text"] = result.Output
+            }
+        };
+
+        var sawToolResult = false;
+
+        foreach (var content in contents)
+        {
+            if (content is ToolResultContent)
+            {
+                sawToolResult = true;
+                continue;
+            }
+
+            if (!sawToolResult)
+            {
+                continue;
+            }
+
+            switch (content)
+            {
+                case TextContent text:
+                {
+                    array.Add(new JsonObject
+                    {
+                        ["type"] = "text",
+                        ["text"] = text.Text
+                    });
+                    break;
+                }
+                case ImageContent image:
+                {
+                    array.Add(MapImage(image));
+                    break;
+                }
+            }
+        }
+
+        return array;
     }
 
     private static JsonNode? MapUserContent(IReadOnlyList<ChatContent> contents)

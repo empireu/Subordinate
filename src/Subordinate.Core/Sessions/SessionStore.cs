@@ -45,6 +45,8 @@ public sealed class SessionPaths(string directory)
 
     public string RunsDirectory => Path.Combine(Directory, "runs");
 
+    public string ImagesDirectory => Path.Combine(Directory, "images");
+
     public string RunDirectory(string runId)
     {
         return Path.Combine(RunsDirectory, runId);
@@ -479,7 +481,7 @@ public sealed class SessionStore
 
         for (var line = marker.KeptFromLine; line < marker.KeptToLine; line++)
         {
-            log.ActiveMessages.Add(((TranscriptMessageEntry)log.Entries[line]).Message);
+            log.ActiveMessages.Add(CompactionImages.StripImages(((TranscriptMessageEntry)log.Entries[line]).Message));
             log.ActiveLineIndices.Add(line);
         }
 

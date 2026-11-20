@@ -13,10 +13,10 @@ namespace Subordinate.Core.Running;
 /// </summary>
 public sealed class SubordinateAgent : Agent<SubordinateContext>
 {
-    public SubordinateAgent(ShellKind shell, IToolCallGate<SubordinateContext> gate) : base("subordinate")
+    public SubordinateAgent(ShellKind shell, IToolCallGate<SubordinateContext> gate, ImageSettings images) : base("subordinate")
     {
         ShellToolHandler.Register(ToolRegistry, shell);
-        ReadFileToolHandler.Register(ToolRegistry);
+        ReadFileToolHandler.Register(ToolRegistry, images);
         WriteFileToolHandler.Register(ToolRegistry);
         EditFileToolHandler.Register(ToolRegistry);
         ToolGate = gate;

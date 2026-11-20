@@ -30,6 +30,16 @@ public sealed class ToolEnvironment
 
     public required int DefaultShellTimeoutSeconds { get; init; }
 
+    /// <summary>
+    ///     The directory that holds the image snapshots of the session.
+    /// </summary>
+    public string ImagesDirectory { get; init; } = string.Empty;
+
+    /// <summary>
+    ///     Counts the images that the model sees in this session at this moment.
+    /// </summary>
+    public Func<int> CountImagesInContext { get; set; } = static () => 0;
+
     public HashSet<string> FilesWritten { get; } = new(PlatformServices.Current.Paths.Comparer);
 
     private int _outputCounter;
@@ -69,18 +79,27 @@ public sealed class SubordinateContext(ToolEnvironment environment) : AgentExecu
 
     public override void InsertToolResult(string toolCallId, string toolName, string output)
     {
+        InsertToolResult(toolCallId, toolName, output, []);
+    }
+
+    public override void InsertToolResult(string toolCallId, string toolName, string output, IReadOnlyList<ImageContent> images)
+    {
+        var contents = new List<ChatContent>(1 + images.Count)
+        {
+            new ToolResultContent
+            {
+                CallId = toolCallId,
+                ToolName = toolName,
+                Output = output
+            }
+        };
+
+        contents.AddRange(images);
+
         Timeline.InsertChat(new ChatMessage
         {
             Role = ChatRole.Tool,
-            Contents =
-            [
-                new ToolResultContent
-                {
-                    CallId = toolCallId,
-                    ToolName = toolName,
-                    Output = output
-                }
-            ]
+            Contents = contents
         });
     }
 
@@ -96,6 +115,29 @@ public sealed class SubordinateContext(ToolEnvironment environment) : AgentExecu
             Role = ChatRole.User,
             AuthorName = authorName,
             Contents = [new TextContent { Text = text }]
+        });
+    }
+
+    public void InsertUserMessage(string text, string? authorName, IReadOnlyList<ImageContent> images)
+    {
+        if (images.Count == 0)
+        {
+            InsertUserMessage(text, authorName);
+            return;
+        }
+
+        var contents = new List<ChatContent>(1 + images.Count)
+        {
+            new TextContent { Text = text }
+        };
+
+        contents.AddRange(images);
+
+        Timeline.InsertChat(new ChatMessage
+        {
+            Role = ChatRole.User,
+            AuthorName = authorName,
+            Contents = contents
         });
     }
 }

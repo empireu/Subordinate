@@ -3,7 +3,9 @@ using System.Text;
 using KnowledgeSystem.Agents.Orchestration;
 using KnowledgeSystem.Agents.Orchestration.Tools;
 using KnowledgeSystem.Agents.Tools;
+using KnowledgeSystem.Ai.Providers.Abstractions;
 using Subordinate.Core.Classification;
+using Subordinate.Core.Images;
 using Subordinate.Core.Platform;
 using Subordinate.Core.Policy;
 using Subordinate.Core.Running;
@@ -139,26 +141,47 @@ internal static class LineEndings
 }
 
 /// <summary>
-///     Reads a text file with line numbers.
+///     Reads a text file with line numbers, or shows an image file to a model that can see images.
 /// </summary>
-public sealed class ReadFileToolHandler(AgentTool tool, StringArgument pathArgument, IntegerArgument offsetArgument, IntegerArgument limitArgument)
+public sealed class ReadFileToolHandler(AgentTool tool, StringArgument pathArgument, IntegerArgument offsetArgument, IntegerArgument limitArgument, ImageSettings images)
     : ToolHandler<SubordinateContext>.Plain(tool), IGatedTool
 {
     public const string ToolName = "read_file";
+
+    public const long MaxImageBytes = 10_000_000;
+
     private const int DefaultLineLimit = 2000;
     private const int MaxLineLength = 2000;
     private const int MaxOutputCharacters = 100_000;
+    private const string ImageLimitReachedMessage = "Maximum number of images in context reached.";
+    private const string TextDescription = "Reads a text file and returns its lines prefixed with line numbers. Use offset and limit to page through large files.";
+    private const string ImageDescription = "Reads a text file and returns its lines prefixed with line numbers, or shows you an image file (PNG, JPEG, GIF or WebP). Use offset and limit to page through large text files; they are ignored for images.";
 
-    public static void Register(AgentToolRegistry<SubordinateContext> registry)
+    public static void Register(AgentToolRegistry<SubordinateContext> registry, ImageSettings images)
     {
         var readTool = new ToolBuilder(ToolName)
-            .WithDescription("Reads a text file and returns its lines prefixed with line numbers. Use offset and limit to page through large files.")
+            .WithDescription(BuildDescription(images))
             .WithRequiredStringArgument("path", "The file path, relative to the session workdir or absolute.", out var pathArg)
             .WithIntegerArgument("offset", "The 1-based line number to start at. Default 1.", out var offsetArg)
             .WithIntegerArgument("limit", $"The number of lines to return. Default {DefaultLineLimit}.", out var limitArg)
             .Build();
 
-        registry.RegisterTool(readTool, new ReadFileToolHandler(readTool, pathArg, offsetArg, limitArg));
+        registry.RegisterTool(readTool, new ReadFileToolHandler(readTool, pathArg, offsetArg, limitArg, images));
+    }
+
+    private static string BuildDescription(ImageSettings images)
+    {
+        if (!images.Enabled)
+        {
+            return TextDescription;
+        }
+
+        if (images.MaxImages is not { } maxImages)
+        {
+            return ImageDescription;
+        }
+
+        return ImageDescription + $" At most {maxImages.ToString(CultureInfo.InvariantCulture)} images can be in the conversation at once. Once that many have been read, reading another image fails.";
     }
 
     public ActionClassification Classify(ArgumentExtractionResult args, ToolEnvironment environment)
@@ -197,6 +220,71 @@ public sealed class ReadFileToolHandler(AgentTool tool, StringArgument pathArgum
             return Task.FromResult(Error($"{path.Path} does not exist."));
         }
 
+        ImageFormat? format;
+
+        try
+        {
+            format = ImageSnapshots.Detect(ReadHeader(path.Path!));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return Task.FromResult(Error($"{path.Path} could not be read: {ex.Message}"));
+        }
+
+        if (format != null)
+        {
+            if (!images.Enabled)
+            {
+                return Task.FromResult(Error($"{path.Path} is a {format.DisplayName} image, and the model of this session cannot view images."));
+            }
+
+            var length = new FileInfo(path.Path!).Length;
+
+            if (length > MaxImageBytes)
+            {
+                return Task.FromResult(Error($"{path.Path} is {length.ToString(CultureInfo.InvariantCulture)} bytes; images larger than {MaxImageBytes.ToString(CultureInfo.InvariantCulture)} bytes cannot be shown."));
+            }
+
+            if (images.MaxImages is { } maxImages && environment.CountImagesInContext() >= maxImages)
+            {
+                return Task.FromResult(Error(ImageLimitReachedMessage));
+            }
+
+            byte[] bytes;
+
+            try
+            {
+                bytes = File.ReadAllBytes(path.Path!);
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                return Task.FromResult(Error($"{path.Path} could not be read: {ex.Message}"));
+            }
+
+            if (bytes.Length > MaxImageBytes)
+            {
+                return Task.FromResult(Error($"{path.Path} is {bytes.Length.ToString(CultureInfo.InvariantCulture)} bytes; images larger than {MaxImageBytes.ToString(CultureInfo.InvariantCulture)} bytes cannot be shown."));
+            }
+
+            var actualFormat = ImageSnapshots.Detect(bytes);
+
+            if (actualFormat != null)
+            {
+                string reference;
+
+                try
+                {
+                    reference = ImageSnapshots.Save(environment.ImagesDirectory, bytes, actualFormat);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+                {
+                    return Task.FromResult(Error($"{path.Path} could not be stored in the session directory: {ex.Message}"));
+                }
+
+                return Task.FromResult(Success($"{path.Path} is a {actualFormat.DisplayName} image ({bytes.Length.ToString(CultureInfo.InvariantCulture)} bytes). It is attached below.", [new ImageContent { Url = reference }]));
+            }
+        }
+
         string text;
         try
         {
@@ -204,7 +292,9 @@ public sealed class ReadFileToolHandler(AgentTool tool, StringArgument pathArgum
 
             if (isBinary)
             {
-                return Task.FromResult(Error($"{path.Path} looks like a binary file."));
+                return Task.FromResult(Error(images.Enabled
+                    ? $"{path.Path} looks like a binary file. Supported image formats are PNG, JPEG, GIF and WebP."
+                    : $"{path.Path} looks like a binary file."));
             }
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
@@ -247,6 +337,14 @@ public sealed class ReadFileToolHandler(AgentTool tool, StringArgument pathArgum
         }
 
         return Task.FromResult(Success(builder.ToString()));
+    }
+
+    private static byte[] ReadHeader(string path)
+    {
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        var header = new byte[ImageSnapshots.HeaderLength];
+        var read = stream.ReadAtLeast(header, header.Length, false);
+        return read == header.Length ? header : header[..read];
     }
 }
 

@@ -571,6 +571,12 @@ public sealed class AgentRunner<TContext> : AgentRunner where TContext : AgentEx
                 ? result.Output
                 : result.FormatError();
 
+            if (result.IsSuccessful && result.Images.Count > 0)
+            {
+                ExecutionContext.InsertToolResult(toolCall.CallId, toolName ?? string.Empty, output, result.Images);
+                continue;
+            }
+
             ExecutionContext.InsertToolResult(toolCall.CallId, toolName ?? string.Empty, output);
         }
 

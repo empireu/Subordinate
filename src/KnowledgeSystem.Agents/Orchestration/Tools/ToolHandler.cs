@@ -1,4 +1,5 @@
 ﻿using KnowledgeSystem.Agents.Tools;
+using KnowledgeSystem.Ai.Providers.Abstractions;
 
 namespace KnowledgeSystem.Agents.Orchestration.Tools;
 
@@ -13,6 +14,8 @@ public abstract class ToolHandler(AgentTool tool)
     public virtual string? GetMissingArgumentError(ArgumentExtractionResult args) => null;
     
     public ToolExecutionResult Success(string output) => new(Tool, true, output, null, null);
+
+    public ToolExecutionResult Success(string output, IReadOnlyList<ImageContent> images) => new(Tool, true, output, null, null, images);
     
     public ToolExecutionResult Error(string message) => new(Tool, false, null, message, null);
 }

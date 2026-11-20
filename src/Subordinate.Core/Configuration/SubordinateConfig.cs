@@ -41,6 +41,10 @@ public sealed class ModelEntry
     public int? ContextWindow { get; set; }
 
     public int? AutocompactThreshold { get; set; }
+
+    public bool SupportsImages { get; set; }
+
+    public int? MaxImages { get; set; }
 }
 
 public sealed class ShellPathsEntry

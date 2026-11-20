@@ -15,6 +15,7 @@ public static class RunFactory
     {
         var (_, model, provider) = config.ResolveModel(record.Model.Alias);
         ValidateAutocompaction(record.Model.Alias, model, config.Defaults);
+        var images = CreateImageSettings(record.Model.Alias, model);
 
         if (!string.Equals(model.Model, record.Model.ModelId, StringComparison.Ordinal))
         {
@@ -62,7 +63,34 @@ public static class RunFactory
             record.Model.Alias,
             record.Model.ModelId,
             record.CurrentRun?.StartedAt ?? DateTimeOffset.UtcNow);
-        return new SessionRunner(store, paths, record, runId, chatProvider, config.CreateRequestOptions(model), executor, MonitorFeedFactory.Create(endpoint, runInfo), compaction);
+        return new SessionRunner(store, paths, record, runId, chatProvider, config.CreateRequestOptions(model), executor, MonitorFeedFactory.Create(endpoint, runInfo), compaction, images);
+    }
+
+    /// <summary>
+    ///     Validates the image settings of a model entry and builds the settings of its sessions.
+    /// </summary>
+    public static ImageSettings CreateImageSettings(string alias, ModelEntry model)
+    {
+        if (model.MaxImages is { } maxImages && maxImages < 1)
+        {
+            throw new SubordinateException(ErrorCode.ConfigError, $"Model \"{alias}\" has max_images {maxImages}, which must be at least 1.");
+        }
+
+        if (model.MaxImages != null && !model.SupportsImages)
+        {
+            throw new SubordinateException(ErrorCode.ConfigError, $"Model \"{alias}\" sets max_images but does not set supports_images.");
+        }
+
+        if (!model.SupportsImages)
+        {
+            return ImageSettings.Disabled;
+        }
+
+        return new ImageSettings
+        {
+            Enabled = true,
+            MaxImages = model.MaxImages
+        };
     }
 
     private static void ValidateAutocompaction(string alias, ModelEntry model, DefaultsEntry defaults)

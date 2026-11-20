@@ -95,6 +95,11 @@ public sealed class InflightFrameRecord
     public string State { get; set; } = FrameStates.NotStarted;
 
     public string? Text { get; set; }
+
+    /// <summary>
+    ///     The image references of a succeeded frame, or null when it has none.
+    /// </summary>
+    public List<string>? Images { get; set; }
 }
 
 /// <summary>
@@ -130,6 +135,11 @@ public sealed class ExecutionRecord
     public DateTimeOffset At { get; set; }
 
     public string? Output { get; set; }
+
+    /// <summary>
+    ///     The image references of the result, or null when it has none.
+    /// </summary>
+    public List<string>? Images { get; set; }
 }
 
 public sealed class PendingRecord

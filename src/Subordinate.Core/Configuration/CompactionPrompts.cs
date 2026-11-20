@@ -9,6 +9,8 @@ public static class CompactionPrompts
 {
     public const string TurnsPlaceholder = "{turns}";
 
+    public const string ImagesRequestParagraph = "The images in this conversation will be removed after your summary. Describe in the summary everything you learned from them that you may still need, as exact text.";
+
     public const string DefaultNotice = """
         [Context compaction notice]
         The context of this session is nearly full. After at most {turns} more model turns, Subordinate will ask you to summarize your work. It will then continue this same task from your summary, with the older messages removed. This is not the end of the task.

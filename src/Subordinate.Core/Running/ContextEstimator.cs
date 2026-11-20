@@ -8,9 +8,15 @@ namespace Subordinate.Core.Running;
 /// </summary>
 public static class ContextEstimator
 {
+    /// <summary>
+    ///     The number of tokens an image counts as, whatever its size.
+    /// </summary>
+    public const long ImageTokenEstimate = 1500;
+
     public static long Estimate(IEnumerable<ChatMessage> messages)
     {
         long characters = 0;
+        long imageTokens = 0;
         var count = 0;
 
         foreach (var message in messages)
@@ -19,6 +25,12 @@ public static class ContextEstimator
 
             foreach (var content in message.Contents)
             {
+                if (content is ImageContent)
+                {
+                    imageTokens += ImageTokenEstimate;
+                    continue;
+                }
+
                 characters += content switch
                 {
                     TextContent text => text.Text.Length,
@@ -30,7 +42,7 @@ public static class ContextEstimator
             }
         }
 
-        return characters / 4 + count * 4L;
+        return characters / 4 + count * 4L + imageTokens;
     }
 
     /// <summary>

@@ -1,4 +1,5 @@
 ﻿using KnowledgeSystem.Agents.Tools;
+using KnowledgeSystem.Ai.Providers.Abstractions;
 
 namespace KnowledgeSystem.Agents.Orchestration.Tools;
 
@@ -11,13 +12,32 @@ public sealed class ToolExecutionResult
     ///     Result of executing a tool.
     /// </summary>
     public ToolExecutionResult(AgentTool tool, bool isSuccessful, string? output, string? errorMessage, Exception? thrownException)
+        : this(tool, isSuccessful, output, errorMessage, thrownException, [])
     {
+    }
+
+    /// <summary>
+    ///     Result of executing a tool, with the images it returns to the model.
+    /// </summary>
+    public ToolExecutionResult(AgentTool tool, bool isSuccessful, string? output, string? errorMessage, Exception? thrownException, IReadOnlyList<ImageContent> images)
+    {
+        if (!isSuccessful && images.Count > 0)
+        {
+            throw new ArgumentException("An unsuccessful tool result cannot hold images.", nameof(images));
+        }
+
         Tool = tool;
         IsSuccessful = isSuccessful;
         Output = output;
         ErrorMessage = errorMessage;
         ThrownException = thrownException;
+        Images = images;
     }
+
+    /// <summary>
+    ///     The images the tool returned. Empty unless the tool returns images.
+    /// </summary>
+    public IReadOnlyList<ImageContent> Images { get; }
     
     public AgentTool Tool { get; }
     

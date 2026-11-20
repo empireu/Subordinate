@@ -8,6 +8,7 @@ using KnowledgeSystem.Agents.Tools;
 using KnowledgeSystem.Ai.Providers.Abstractions;
 using KnowledgeSystem.Events.Implementation;
 using Subordinate.Core.Classification;
+using Subordinate.Core.Configuration;
 using Subordinate.Core.Gate;
 using Subordinate.Core.Monitoring;
 using Subordinate.Core.Output;
@@ -36,6 +37,11 @@ public sealed class RunOutcome
 }
 
 /// <summary>
+///     The supervisor update that a run delivers, with the images of the approved results it reports.
+/// </summary>
+public sealed record SupervisorUpdate(string Text, IReadOnlyList<ImageContent> Images);
+
+/// <summary>
 ///     Drives one run of a session: restores the conversation, delivers decisions, steps the agent and persists after every step.
 /// </summary>
 public sealed class SessionRunner
@@ -53,6 +59,7 @@ public sealed class SessionRunner
     private readonly ICommandExecutor _executor;
     private readonly IMonitorFeed _monitor;
     private readonly CompactionSettings _compaction;
+    private readonly ImageSettings _images;
     private readonly HashSet<string> _startedCallIds = [];
     private readonly HashSet<string> _reportedToolCallIds = [];
     private readonly List<int> _activeLineIndices = [];
@@ -69,6 +76,7 @@ public sealed class SessionRunner
     private int _compactionCallsThisRun;
     private int _countedCompactionCalls;
     private int _summaryCallsThisRun;
+    private int _deliveredImageCount;
     private bool _lastCallWasSummary;
     private int? _compactedAtModelCall;
     private long _countedInputTokens;
@@ -84,7 +92,7 @@ public sealed class SessionRunner
     private string? _activeToolName;
     private string? _stopRequestedBy;
 
-    public SessionRunner(SessionStore store, SessionPaths paths, SessionRecord record, string runId, IChatProvider provider, ChatRequestOptions requestOptions, ICommandExecutor executor, IMonitorFeed? monitorFeed = null, CompactionSettings? compaction = null)
+    public SessionRunner(SessionStore store, SessionPaths paths, SessionRecord record, string runId, IChatProvider provider, ChatRequestOptions requestOptions, ICommandExecutor executor, IMonitorFeed? monitorFeed = null, CompactionSettings? compaction = null, ImageSettings? images = null)
     {
         _store = store;
         _paths = paths;
@@ -104,6 +112,7 @@ public sealed class SessionRunner
         };
         _executor = executor;
         _compaction = compaction ?? CompactionSettings.Disabled;
+        _images = images ?? ImageSettings.Disabled;
     }
 
     private static string CreatePromptCacheKey(SessionRecord record)
@@ -235,14 +244,23 @@ public sealed class SessionRunner
             Executor = _executor,
             OutputDirectory = _runDirectory,
             ReadableRoots = [_paths.RunsDirectory],
-            DefaultShellTimeoutSeconds = _record.Limits.ShellTimeoutSeconds > 0 ? _record.Limits.ShellTimeoutSeconds : 120
+            DefaultShellTimeoutSeconds = _record.Limits.ShellTimeoutSeconds > 0 ? _record.Limits.ShellTimeoutSeconds : 120,
+            ImagesDirectory = _paths.ImagesDirectory
         };
+
+        environment.CountImagesInContext = CountImagesInContext;
 
         environment.FilesWritten.UnionWith(_record.FilesWritten);
         _context = new SubordinateContext(environment);
 
         var transcriptLog = _store.LoadTranscriptLog(_paths, _record.Transcript);
         var transcript = ValidateLog(transcriptLog, _record);
+
+        if (!_images.Enabled && transcript.Any(message => message.Contents.Any(content => content is ImageContent)))
+        {
+            throw new SubordinateException(ErrorCode.ConfigError, $"This session contains images, but model \"{_record.Model.Alias}\" no longer sets supports_images. Set it again or start a new session.");
+        }
+
         foreach (var message in transcript)
         {
             _context.Timeline.InsertChat(message);
@@ -255,8 +273,8 @@ public sealed class SessionRunner
         var ledger = new PendingLedger(_record);
         _ledger = ledger;
         var gate = new SubordinateGate(ledger, () => _runId, MarkExecutionStartingAsync) { RefuseNewCalls = RefuseToolCalls };
-        var agent = new SubordinateAgent(shell, gate) { KeepRunningAfterAnswer = () => _record.Compaction != null };
-        _counting = new CountingChatProvider(new MonitoredChatProvider(_provider, _monitor));
+        var agent = new SubordinateAgent(shell, gate, _images) { KeepRunningAfterAnswer = () => _record.Compaction != null };
+        _counting = new CountingChatProvider(new MonitoredChatProvider(new ImageResolvingChatProvider(_provider, _paths.ImagesDirectory, line => RunArtifacts.AppendLog(_runDirectory, line)), _monitor));
         _runner = new AgentRunner<SubordinateContext>(
             _counting,
             agent,
@@ -275,6 +293,7 @@ public sealed class SessionRunner
 
         _persistenceEnabled = true;
         var updates = await DeliverDecisionsAsync(agent, gate, ledger, inflightCallIds, cancellationToken);
+        _deliveredImageCount = updates?.Images.Count ?? 0;
         var updateInserted = false;
         var modelCallsAtStart = _counting.ModelCalls;
         var warningThreshold = Math.Min(10, Math.Max(1, limits.MaxModelCalls / 4));
@@ -292,7 +311,8 @@ public sealed class SessionRunner
 
                 if (updates != null)
                 {
-                    _context.InsertUserMessage(updates);
+                    _context.InsertUserMessage(updates.Text, null, updates.Images);
+                    _deliveredImageCount = 0;
                     MarkDelivered(ledger, inflightCallIds);
                     _record.QueuedMessage = null;
                     Persist();
@@ -389,7 +409,7 @@ public sealed class SessionRunner
 
                         if (!requestIsLast)
                         {
-                            _context.InsertUserMessage(_compaction.RequestText, CompactionAuthors.Request);
+                            _context.InsertUserMessage(BuildCompactionRequestText(), CompactionAuthors.Request);
                             _lastActivity = "compaction: writing the summary";
                             Persist();
                         }
@@ -466,6 +486,36 @@ public sealed class SessionRunner
         }
 
         return _record.PendingCount > 0 ? SessionStates.AwaitingApproval : SessionStates.Finished;
+    }
+
+    private string BuildCompactionRequestText()
+    {
+        if (_context!.ChatMessages.Any(message => message.Contents.Any(content => content is ImageContent)))
+        {
+            return _compaction.RequestText + "\n\n" + CompactionPrompts.ImagesRequestParagraph;
+        }
+
+        return _compaction.RequestText;
+    }
+
+    private int CountImagesInContext()
+    {
+        var count = 0;
+
+        foreach (var message in _context?.ChatMessages ?? [])
+        {
+            count += message.Contents.Count(content => content is ImageContent);
+        }
+
+        foreach (var frame in _runner?.ActiveToolCalls ?? [])
+        {
+            if (frame is AgentToolFrame.RunningFrame { Result: { IsSuccessful: true } result })
+            {
+                count += result.Images.Count;
+            }
+        }
+
+        return count + _deliveredImageCount;
     }
 
     private string? RefuseToolCalls()
@@ -590,7 +640,7 @@ public sealed class SessionRunner
 
         for (var index = keptStart; index < keptEnd; index++)
         {
-            keptMessages.Add(messages[index]);
+            keptMessages.Add(CompactionImages.StripImages(messages[index]));
             keptLineIndices.Add(_activeLineIndices[index]);
         }
 
@@ -832,7 +882,7 @@ public sealed class SessionRunner
             {
                 case FrameStates.Succeeded:
                 {
-                    return RestoredToolCall.Completed(new ToolExecutionResult(frame.Tool, true, record.Text ?? string.Empty, null, null));
+                    return RestoredToolCall.Completed(new ToolExecutionResult(frame.Tool, true, record.Text ?? string.Empty, null, null, RecordedImages(record.Images)));
                 }
                 case FrameStates.Failed:
                 {
@@ -876,10 +926,12 @@ public sealed class SessionRunner
         return restoredCallIds;
     }
 
-    private async Task<string?> DeliverDecisionsAsync(SubordinateAgent agent, SubordinateGate gate, PendingLedger ledger, HashSet<string> inflightCallIds, CancellationToken cancellationToken)
+    private async Task<SupervisorUpdate?> DeliverDecisionsAsync(SubordinateAgent agent, SubordinateGate gate, PendingLedger ledger, HashSet<string> inflightCallIds, CancellationToken cancellationToken)
     {
         var builder = new StringBuilder();
         var lines = new List<string>();
+        var images = new List<ImageContent>();
+        _deliveredImageCount = 0;
 
         foreach (var item in _record.Pending.ToList())
         {
@@ -899,7 +951,9 @@ public sealed class SessionRunner
 
             if (item.Execution == null)
             {
-                output = await ExecuteApprovedAsync(agent, gate, item, cancellationToken);
+                var execution = await ExecuteApprovedAsync(agent, gate, item, cancellationToken);
+                output = execution.Text;
+                images.AddRange(execution.Images);
             }
             else if (item.Execution.State == "started")
             {
@@ -908,7 +962,10 @@ public sealed class SessionRunner
             else
             {
                 output = item.Execution.Output ?? string.Empty;
+                images.AddRange(RecordedImages(item.Execution));
             }
+
+            _deliveredImageCount = images.Count;
 
             lines.Add($"- APPROVED {item.Id} ({item.Summary}), scope {item.Decision?.Scope ?? "once"}. It was run for you. Result:\n{Indent(output)}");
         }
@@ -945,15 +1002,35 @@ public sealed class SessionRunner
             builder.Append("\nContinue the task.\n");
         }
 
-        return builder.ToString();
+        return new SupervisorUpdate(builder.ToString(), images);
     }
 
-    private async Task<string> ExecuteApprovedAsync(SubordinateAgent agent, SubordinateGate gate, PendingRecord item, CancellationToken cancellationToken)
+    private static IReadOnlyList<ImageContent> RecordedImages(ExecutionRecord record)
+    {
+        if (record.Images == null || record.Images.Count == 0)
+        {
+            return [];
+        }
+
+        return record.Images.Select(url => new ImageContent { Url = url }).ToArray();
+    }
+
+    private static IReadOnlyList<ImageContent> RecordedImages(List<string>? images)
+    {
+        if (images == null || images.Count == 0)
+        {
+            return [];
+        }
+
+        return images.Select(url => new ImageContent { Url = url }).ToArray();
+    }
+
+    private async Task<(string Text, IReadOnlyList<ImageContent> Images)> ExecuteApprovedAsync(SubordinateAgent agent, SubordinateGate gate, PendingRecord item, CancellationToken cancellationToken)
     {
         if (!agent.ToolRegistry.ToolSet.Tools.TryGetValue(item.Tool, out var tool) || agent.ToolRegistry.Handlers[tool] is not ToolHandler<SubordinateContext>.Plain handler)
         {
             item.Execution = new ExecutionRecord { State = FrameStates.Failed, At = DateTimeOffset.UtcNow, Output = $"The tool {item.Tool} is not available." };
-            return item.Execution.Output!;
+            return (item.Execution.Output!, []);
         }
 
         var args = ArgumentExtractionResult.ExtractArguments(tool, TranscriptSerializer.ParseArguments(item.ArgumentsJson));
@@ -964,7 +1041,7 @@ public sealed class SessionRunner
         {
             var refused = verdict is ToolGateVerdict.DenyVerdict deny ? deny.Message : "The call was not allowed to run.";
             item.Execution = new ExecutionRecord { State = FrameStates.Failed, At = DateTimeOffset.UtcNow, Output = refused };
-            return refused;
+            return (refused, []);
         }
 
         _lastActivity = $"running approved {item.Id}: {Shorten(item.Summary, 120)}";
@@ -982,11 +1059,13 @@ public sealed class SessionRunner
         }
 
         var text = result.IsSuccessful ? result.Output : result.FormatError();
+        IReadOnlyList<ImageContent> images = result.IsSuccessful ? result.Images : [];
         item.Execution = new ExecutionRecord
         {
             State = result.IsSuccessful ? FrameStates.Succeeded : FrameStates.Failed,
             At = DateTimeOffset.UtcNow,
-            Output = Shorten(text, RecordedOutputLimit)
+            Output = Shorten(text, RecordedOutputLimit),
+            Images = images.Count > 0 ? images.Select(image => image.Url).ToList() : null
         };
 
         RunArtifacts.AppendLog(_runDirectory, $"  -> {Shorten(FirstLine(text), 200)}");
@@ -994,7 +1073,7 @@ public sealed class SessionRunner
         _store.Save(_paths, _record);
         _reportedToolCallIds.Add(item.CallId);
         _monitor.Publish(new MonitorToolFinished(item.CallId, result.IsSuccessful, Truncate(FirstLine(text), MonitorProtocol.MaxFirstLineCharacters), DateTimeOffset.UtcNow));
-        return text;
+        return (text, images);
     }
 
     private void MarkDelivered(PendingLedger ledger, HashSet<string> inflightCallIds)
@@ -1085,7 +1164,8 @@ public sealed class SessionRunner
                     {
                         State = completed.Result.IsSuccessful ? FrameStates.Succeeded : FrameStates.Failed,
                         At = DateTimeOffset.UtcNow,
-                        Output = Shorten(text, RecordedOutputLimit)
+                        Output = Shorten(text, RecordedOutputLimit),
+                        Images = completed.Result.Images.Count > 0 ? completed.Result.Images.Select(image => image.Url).ToList() : null
                     };
                     item.Delivered = true;
                 }
@@ -1155,6 +1235,11 @@ public sealed class SessionRunner
             {
                 state.State = running.Result.IsSuccessful ? FrameStates.Succeeded : FrameStates.Failed;
                 state.Text = running.Result.IsSuccessful ? running.Result.Output : running.Result.FormatError();
+
+                if (running.Result.IsSuccessful && running.Result.Images.Count > 0)
+                {
+                    state.Images = running.Result.Images.Select(image => image.Url).ToList();
+                }
             }
             else if (_startedCallIds.Contains(running.CallId) || running is AgentToolFrame.PlainRunningFrame { StartedTask: not null })
             {

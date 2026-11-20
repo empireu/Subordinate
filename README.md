@@ -46,6 +46,14 @@ A compaction starts at a point where no tool batch is open. With wind-down turns
 
 The full history stays in `transcript.jsonl`; a compaction only appends a marker line with the summary and the kept line range. The monitor shows the marker as one note. If the model cannot produce a usable summary, the run fails with `compaction_failed` (exit code 21) and the session can be resumed; the next run asks for the summary again.
 
+### Images
+
+`supports_images` is optional and works per model. It defaults to false. When it is true, `read_file` shows a PNG, JPEG, GIF or WebP file to the model as an image instead of failing on it as a binary file.
+
+`max_images` is optional and works per model. It caps how many images the conversation can hold at once; once that many have been read, reading another one fails with `Maximum number of images in context reached.` It requires `supports_images` and must be at least 1.
+
+An image may be at most 10,000,000 bytes. When the tool reads one, it copies the bytes into the `images` directory of the session and the transcript refers to that copy, so a resumed session sends exactly the same bytes even when the original file changed or disappeared. A model entry without `supports_images: true` behaves exactly as before.
+
 `monitor.enabled` defaults to true. `monitor.socket_path` overrides the default `<home>/monitor.sock` and must be an absolute path no longer than 100 bytes. Setting `monitor.enabled` to false turns off all socket code in Subordinate; the monitor still shows sessions from their files.
 
 ### System prompt

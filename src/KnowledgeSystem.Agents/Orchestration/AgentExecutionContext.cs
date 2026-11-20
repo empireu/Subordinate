@@ -26,4 +26,19 @@ public abstract class AgentExecutionContext
     ///     Inserts a tool result into the context.
     /// </summary>
     public abstract void InsertToolResult(string toolCallId, string toolName, string output);
+
+    /// <summary>
+    ///     Inserts a tool result that carries images into the context.
+    ///     Contexts that cannot hold images fail loudly instead of dropping them.
+    /// </summary>
+    public virtual void InsertToolResult(string toolCallId, string toolName, string output, IReadOnlyList<ImageContent> images)
+    {
+        if (images.Count == 0)
+        {
+            InsertToolResult(toolCallId, toolName, output);
+            return;
+        }
+
+        throw new NotSupportedException($"The execution context {GetType().Name} cannot hold tool results with images.");
+    }
 }
