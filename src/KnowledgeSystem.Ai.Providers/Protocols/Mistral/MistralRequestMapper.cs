@@ -15,6 +15,8 @@ internal static class MistralRequestMapper
             messages.Add(MapMessage(message));
         }
 
+        var tools = MapTools(request.Tools);
+
         return new MistralChatRequest
         {
             Model = request.Model ?? string.Empty,
@@ -22,10 +24,11 @@ internal static class MistralRequestMapper
             Stream = true,
             Temperature = request.Temperature,
             MaxTokens = request.MaxOutputTokens,
-            Tools = MapTools(request.Tools),
+            Tools = tools,
             ToolChoice = request.ToolChoice,
             ReasoningEffort = request.ReasoningEffort,
-            PromptCacheKey = request.PromptCacheKey,
+            ParallelToolCalls = tools is { Count: > 0 } ? true : null,
+            Metadata = request.Metadata is { Count: > 0 } ? request.Metadata : null,
             StreamOptions = new MistralStreamOptions
             {
                 IncludeUsage = true

@@ -44,6 +44,9 @@ public abstract class AgentRunner
     /// </summary>
     public AgentRunner TopMostRunner { get; }
 
+    private protected readonly string _messageId = Guid.NewGuid().ToString("D");
+    private protected int _completionCallIndex;
+
     protected readonly List<AgentToolFrame> ToolCallsInternal = [];
 
     /// <summary>
@@ -224,6 +227,29 @@ public sealed class AgentRunner<TContext> : AgentRunner where TContext : AgentEx
         return status;
     }
 
+    private IReadOnlyDictionary<string, string>? CreateTurnMetadata(IReadOnlyDictionary<string, string>? baseMetadata)
+    {
+        if (baseMetadata == null || baseMetadata.Count == 0)
+        {
+            return baseMetadata;
+        }
+
+        var metadata = new Dictionary<string, string>(baseMetadata, StringComparer.Ordinal);
+
+        if (!metadata.ContainsKey("message_id"))
+        {
+            metadata["message_id"] = _messageId;
+        }
+
+        if (_completionCallIndex > 0)
+        {
+            metadata["call_type"] = "secondary_call";
+        }
+
+        _completionCallIndex++;
+        return metadata;
+    }
+
     private async Task<TurnStatus> ExecuteTurnCore()
     {
         if (IsFinished)
@@ -254,7 +280,8 @@ public sealed class AgentRunner<TContext> : AgentRunner where TContext : AgentEx
             MaxOutputTokens = turnOptions.MaxOutputTokens,
             ReasoningEffort = turnOptions.ReasoningEffort,
             ToolChoice = turnOptions.ToolChoice,
-            PromptCacheKey = turnOptions.PromptCacheKey
+            PromptCacheKey = turnOptions.PromptCacheKey,
+            Metadata = CreateTurnMetadata(turnOptions.Metadata)
         };
 
         // Executes the LLM call and raises the error and completion events:

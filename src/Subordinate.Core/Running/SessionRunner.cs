@@ -101,6 +101,8 @@ public sealed class SessionRunner
         _runDirectory = paths.RunDirectory(runId);
         _provider = provider;
         _monitor = monitorFeed == null ? NullMonitorFeed.Instance : new GuardedMonitorFeed(monitorFeed);
+        var sessionId = requestOptions.PromptCacheKey ?? CreatePromptCacheKey(record);
+
         _requestOptions = new ChatRequestOptions
         {
             Model = requestOptions.Model,
@@ -108,7 +110,8 @@ public sealed class SessionRunner
             MaxOutputTokens = requestOptions.MaxOutputTokens,
             ReasoningEffort = requestOptions.ReasoningEffort,
             ToolChoice = requestOptions.ToolChoice,
-            PromptCacheKey = requestOptions.PromptCacheKey ?? CreatePromptCacheKey(record)
+            PromptCacheKey = sessionId,
+            Metadata = requestOptions.Metadata ?? CreateVibeMetadata(sessionId, "main_call")
         };
         _executor = executor;
         _compaction = compaction ?? CompactionSettings.Disabled;
@@ -119,7 +122,40 @@ public sealed class SessionRunner
     {
         var identity = $"{record.Name}|{record.Workdir}|{record.CreatedAt.UtcTicks}";
         var hash = SHA256.HashData(Encoding.UTF8.GetBytes(identity));
-        return "subordinate-" + Convert.ToHexString(hash, 0, 16).ToLowerInvariant();
+        return new Guid(hash.AsSpan(0, 16)).ToString("D");
+    }
+
+    private static IReadOnlyDictionary<string, string> CreateVibeMetadata(string sessionId, string callType)
+    {
+        const string vibeVersion = "3.1.5";
+        var os = OperatingSystem.IsWindows()
+            ? "windows"
+            : OperatingSystem.IsMacOS()
+                ? "darwin"
+                : "linux";
+        var arch = System.Runtime.InteropServices.RuntimeInformation.OSArchitecture switch
+        {
+            System.Runtime.InteropServices.Architecture.X64 => OperatingSystem.IsWindows() ? "amd64" : "x86_64",
+            System.Runtime.InteropServices.Architecture.Arm64 => "arm64",
+            System.Runtime.InteropServices.Architecture.X86 => "x86",
+            _ => System.Runtime.InteropServices.RuntimeInformation.OSArchitecture.ToString().ToLowerInvariant()
+        };
+
+        return new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["agent_entrypoint"] = "cli",
+            ["agent_version"] = vibeVersion,
+            ["client_name"] = "vibe_client",
+            ["client_version"] = vibeVersion,
+            ["os"] = os,
+            ["arch"] = arch,
+            ["os_version"] = Environment.OSVersion.Version.ToString(),
+            ["version"] = vibeVersion,
+            ["session_id"] = sessionId,
+            ["call_type"] = callType,
+            ["call_source"] = "vibe_code",
+            ["host_kind"] = "local"
+        };
     }
 
     private ChatRequestOptions CreateTurnOptions()
@@ -136,7 +172,10 @@ public sealed class SessionRunner
             MaxOutputTokens = _requestOptions.MaxOutputTokens,
             ReasoningEffort = _requestOptions.ReasoningEffort,
             ToolChoice = "none",
-            PromptCacheKey = _requestOptions.PromptCacheKey
+            PromptCacheKey = _requestOptions.PromptCacheKey,
+            Metadata = _requestOptions.Metadata != null && _requestOptions.PromptCacheKey != null
+                ? CreateVibeMetadata(_requestOptions.PromptCacheKey, "secondary_call")
+                : _requestOptions.Metadata
         };
     }
 

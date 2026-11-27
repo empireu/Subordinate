@@ -13,6 +13,8 @@ public sealed class MistralChatCompletionsProtocol : IChatProtocol
 
     private const int DefaultNetworkTimeoutSeconds = 600;
     private const int MaxRawErrorBodyLength = 4096;
+    public const string VibeUserAgent = "mistral-client-python/Mistral-Vibe/3.1.5";
+    public const string AffinityHeaderName = "x-affinity";
 
     private static readonly HttpClient HttpClient = new()
     {
@@ -177,7 +179,7 @@ public sealed class MistralChatCompletionsProtocol : IChatProtocol
         return cts;
     }
 
-    private static HttpRequestMessage CreateHttpRequest(ChatProtocolRequest request)
+    internal static HttpRequestMessage CreateHttpRequest(ChatProtocolRequest request)
     {
         var url = request.Endpoint.ToString().TrimEnd('/') + "/chat/completions";
         var body = MistralRequestMapper.Map(request.Request);
@@ -191,9 +193,31 @@ public sealed class MistralChatCompletionsProtocol : IChatProtocol
         httpRequest.Content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
         httpRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", request.ApiKey);
 
+        var hasUserAgent = false;
+        var hasAffinity = false;
+
         foreach (var header in request.Headers)
         {
+            if (string.Equals(header.Key, "user-agent", StringComparison.OrdinalIgnoreCase))
+            {
+                hasUserAgent = true;
+            }
+            else if (string.Equals(header.Key, AffinityHeaderName, StringComparison.OrdinalIgnoreCase))
+            {
+                hasAffinity = true;
+            }
+
             httpRequest.Headers.TryAddWithoutValidation(header.Key, header.Value);
+        }
+
+        if (!hasUserAgent)
+        {
+            httpRequest.Headers.TryAddWithoutValidation("User-Agent", VibeUserAgent);
+        }
+
+        if (!hasAffinity && !string.IsNullOrWhiteSpace(request.Request.PromptCacheKey))
+        {
+            httpRequest.Headers.TryAddWithoutValidation(AffinityHeaderName, request.Request.PromptCacheKey);
         }
 
         return httpRequest;

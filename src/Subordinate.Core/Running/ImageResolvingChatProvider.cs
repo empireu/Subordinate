@@ -60,7 +60,8 @@ public sealed class ImageResolvingChatProvider(IChatProvider inner, string image
             Temperature = request.Temperature,
             MaxOutputTokens = request.MaxOutputTokens,
             ReasoningEffort = request.ReasoningEffort,
-            PromptCacheKey = request.PromptCacheKey
+            PromptCacheKey = request.PromptCacheKey,
+            Metadata = request.Metadata
         };
     }
 

@@ -79,7 +79,8 @@ public sealed class MistralChatCompletionsProvider : IChatProvider
             Temperature = request.Temperature,
             MaxOutputTokens = request.MaxOutputTokens,
             ReasoningEffort = request.ReasoningEffort,
-            PromptCacheKey = request.PromptCacheKey
+            PromptCacheKey = request.PromptCacheKey,
+            Metadata = request.Metadata
         };
     }
 }

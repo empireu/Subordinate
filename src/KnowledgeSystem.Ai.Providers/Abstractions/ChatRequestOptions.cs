@@ -8,4 +8,5 @@ public sealed class ChatRequestOptions
     public string? ReasoningEffort { get; init; }
     public string? ToolChoice { get; init; }
     public string? PromptCacheKey { get; init; }
+    public IReadOnlyDictionary<string, string>? Metadata { get; init; }
 }
